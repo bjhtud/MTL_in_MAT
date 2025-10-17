@@ -1,0 +1,4 @@
+KUL-edCCRC: Experimental Datasets for Concrete Cracking due to Reinforcement Corrosion
+https://rdr.kuleuven.be/dataset.xhtml?persistentId=doi%3A10.48804%2FWO62A4
+特征：试件几何、混凝土组成/强度、配筋与预裂、腐蚀工况
+标签：裂缝宽度、钢筋质量损失（腐蚀水平）

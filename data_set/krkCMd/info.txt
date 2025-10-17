@@ -1,0 +1,4 @@
+Deposition of data for developing deep learning models to assess crack width and self-healing progress in concrete (krkCMd)
+https://zenodo.org/records/14568863
+
+五百多个特征，是用来训练CV模型的

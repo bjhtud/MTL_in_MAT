@@ -1,0 +1,110 @@
+// "Crack_Multi_Intersection_ROI_ImageJ2"
+// This macro ImageJ2 create lines ROI perpendicular to detected crack line and export them to RoiManager and save as ".zip" file [1,2,3].
+// To activate it, a rectangular area must first be marked on the image where the position of the crack will be detected and the intersection lines overlaid.
+// [1] Jakubowski, J. & Tomczak, K. Deposition of data for developing deep learning models to assess crack width and self-healing progress in concrete (krkCMd). Zenodo doi: 10.5281/zenodo.11408398 (2024)
+// [2] Jakubowski, J. & Tomczak, K. Deep learning metasensor for crack-width assessment and self-healing evaluation in concrete. Constr. Build. Mater. 422, 135768 (2024).
+// [3] Tomczak, K., Jakubowski, J. & Fiołek, P. Method for Assessment of Changes in the Width of Cracks in Cement Composites with Use of Computer Image Processing and Analysis. Stud. Geotech. Mech. 39, 73–80 (2017)
+// This work is licensed under CC BY 4.0 
+
+spacingL = 100; //the assumed minimum distance between ROI
+RoiL = 500; //the assumed length of the ROI
+
+nameSet = getTitle();
+
+run("ROI Manager...");
+if (roiManager("count")>0) {
+	roiManager("Select", 0);
+	if (selectionType()!=0)
+    	exit("Rectangle Selection Required");
+} else exit("Rectangle Selection Required");
+Roi.getBounds(x, y, widthR, heigthR);
+xS = x;
+yS = y;
+xE = x + widthR;
+yE = y + heigthR;
+
+nRoi = xE/spacingL;
+
+if (roiManager("count")>0)
+	roiManager("Delete");
+
+for (i=0; i<=nRoi; i++) {
+	ix = i*spacingL;
+	iy = 0;
+	x = xS + ix;
+	y = yS;
+	do {
+		makeLine(x, y+iy, x, y+RoiL+iy);
+		xC = x;
+		yC = y+1/2*RoiL+iy;
+		PixelCol = PixelColorPicker(xC,yC);
+		iy++;
+	}
+	while ((PixelCol[0]>30 && PixelCol[1]>30 && PixelCol[2]>30) && (yC<yE));
+	if (yC!=yE)
+		roiManager("Add");	
+}
+
+nRois = roiManager("count");
+for (i=0; i<=nRois-1; i++) {
+    roiManager("Select", 0);
+	getLine(x1s, y1s, x1e, y1e, lineWidth1);
+	roiManager("Select", 1);
+	getLine(x2s, y2s, x2e, y2e, lineWidth2);
+	getPixelSize(unit, width, height, depth);
+	x1s *= width; y1s *= height; x1e *= width; y1e *= height;
+	x2s *= width; y2s *= height; x2e *= width; y2e *= height;
+	angleL = -getAngle((x1s+(x1e-x1s)/2), (y1s+(y1e-y1s)/2), (x2s+(x2e-x2s)/2), (y2s+(y2e-y2s)/2));
+	print(angleL);
+	if (angleL<-50 && angleL>-310)  //the ‘-’ sign is associated with a clockwise rotation of the line
+		angleL = 0;
+	print(angleL);
+	roiManager("Select", 0);
+	run("Rotate...", "angle=&angleL");
+	roiManager("Add");
+	roiManager("Select", 0);
+	roiManager("Delete");
+}
+
+roiManager("Remove Slice Info");
+roiManager("Show All without labels");
+//path = getDirectory("Choose directory to save ROI set");
+//roiManager("Save", path + "/" + nameSet + ".zip");
+
+function PixelColorPicker(x,y) {
+	v = getPixel(x,y);
+    if (bitDepth==24) {
+    	red = (v>>16)&0xff;  // extract red byte (bits 23-17)
+        green = (v>>8)&0xff; // extract green byte (bits 15-8)
+        blue = v&0xff;       // extract blue byte (bits 7-0)
+        return newArray(red, green, blue);
+	} else
+        return newArray(v, v, v);
+}
+
+// This function returns the angle in degrees between the specified line and the horizontal axis
+function getAngle(x1, y1, x2, y2) {
+	q1=0; q2orq3=2; q4=3; //quadrant number
+    dx = x2-x1;
+    dy = y1-y2;
+    if (dx!=0)
+    	angle = atan(dy/dx);
+    else {
+        if (dy>=0)
+            angle = PI/2;
+        else
+            angle = -PI/2;
+    }
+    angle = (180/PI)*angle;
+    if (dx>=0 && dy>=0)
+        quadrant = q1;
+    else if (dx<0)
+        quadrant = q2orq3;
+    else
+        quadrant = q4;
+    if (quadrant==q2orq3)
+        angle = angle+180;
+    else if (quadrant==q4)
+        angle = angle+360;
+    return angle;
+}

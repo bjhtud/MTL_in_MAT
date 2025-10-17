@@ -1,0 +1,9 @@
+元数据带有缺失
+https://zenodo.org/records/10553470
+https://github.com/JaGuzmanT/ConcreteXAI
+
+文章：
+https://www.sciencedirect.com/science/article/pii/S2352340924001896?via%3Dihub
+
+特征：配合比变量；无损参数：UPV、体电阻率等
+标签：抗压强度、劈裂抗拉强度、抗折强度

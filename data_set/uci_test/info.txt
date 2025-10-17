@@ -1,0 +1,6 @@
+特征：水泥、矿渣、粉煤灰、水、减水剂、粗骨料、细骨料
+标签：坍落度（cm）、扩展度（cm）、28天抗压强度（MPa）
+https://archive.ics.uci.edu/dataset/182/concrete+slump+test
+
+原版论文：
+Modeling of strength of high-performance concrete using artificial neural networks

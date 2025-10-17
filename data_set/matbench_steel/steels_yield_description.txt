@@ -1,0 +1,1 @@
+This is an experiment measuring the yield strength of steel samples with different chemical compositions. For each sample, the input variables are the contents of Fe, C, Mn, Si, Cr, Ni, Mo, V, Nb, Co, Al, Ti, N, and W. The output variable is the measured yield strength of the steel.
