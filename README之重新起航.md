@@ -48,22 +48,23 @@
   - 多输出SVR (跟GP差不多)
   - autosklearn 支持多元回归
 
-### 传统机器学习方法(直接能处理缺失特征和标签的模型) 
+没有利用标签之间的关系
 
-梯度提升决策树（GBDT）框架
-* CatBoost (MultiRMSE / MultiRMSEWithMissingValues) 显式建模标签/任务间相似性
-* XGBoost：可以直接处理缺失值。
-* MT-ExtraTrees (Tree-Based Ensemble Multi-Task Learning Method for Classification and Regression)
+
+### 迭代插补(利用标签关系)
+
+* 堆叠(Multi-target regression via input space expansion: treating targets as inputs)
+* 回归链(同上，还有：leveraging multi-task learning regressor chains for small and sparse tabular data in materials design)
+* 
+### 传统机器学习方法(直接能处理缺失特征和标签的模型) 
 
 基于贝叶斯推理(不一定好使，但可以试试)
 * Multitask GP Regression (缺失特征：用 Uncertain Inputs——对缺失列设高斯分布 μ±σ，内核对该维做解析积分。GPyTorch里有完整例子。)
 
-基于集成学习
-* 堆叠(Multi-target regression via input space expansion: treating targets as inputs)
-* 回归链(同上，还有：leveraging multi-task learning regressor chains for small and sparse tabular data in materials design)
+### 基于集成学习
 * subset
 
-### 深度学习方法
+### 深度学习方法(不行)
 
 在不完整数据集上进行训练的深度学习方法：
 * TabNet
@@ -77,7 +78,11 @@
 *   ~~- A multi-task learning-based generative adversarial network for red tide multivariate time series imputation~~
 
 
-### 只能处理特征缺失的模型：(仅仅记录，以防后边脑子一热又要做)
+### 只能处理特征缺失的模型：(插补标签缺失+可处理特征缺失的模型)
 * LightGBM：use_missing 参数可以处理缺失值。
 * HistGradientBoostingRegressor：可以直接处理缺失值。
 * HMlasso
+* 梯度提升决策树（GBDT）框架
+* CatBoost (MultiRMSE / MultiRMSEWithMissingValues) 显式建模标签/任务间相似性
+* XGBoost：可以直接处理缺失值。
+* MT-ExtraTrees (Tree-Based Ensemble Multi-Task Learning Method for Classification and Regression)
