@@ -32,11 +32,10 @@ class ModelInter(BaseDataset): # 可以自动处理缺失的模型
                  X_test:pd.DataFrame,
                  y_test:pd.DataFrame,
                  task_name:str,
-                 method: str = 'XGBoost',
                  seed:int = 42):
+
         super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
 
-        self.method = method
         self.task_name = task_name
 
     def _impute(self):
@@ -102,7 +101,6 @@ class ModelInter(BaseDataset): # 可以自动处理缺失的模型
         print(f'XGBoost R2: {xgboost_r2:.3f}, MSE: {xgboost_mse:.3f}, MAE: {xgboost_mae:.3f}')
         print(f'MT-ExtraTrees R2: {mtet_r2:.3f}, MSE: {mtet_mse:.3f}, MAE: {mtet_mae:.3f}')
 
-
 class IterativeInter(BaseDataset): #迭代和堆叠
     '''
     * 堆叠(Multi-target regression via input space expansion: treating targets as inputs)
@@ -112,12 +110,33 @@ class IterativeInter(BaseDataset): #迭代和堆叠
         super().__init__()
 
 
+from uhpc.method.MultitaskGP import model_fit_predict
+
 class GPReg(BaseDataset): # 传统机器学习，基于贝叶斯推理
     '''
     * Multitask GP Regression (缺失特征：用 Uncertain Inputs——对缺失列设高斯分布 μ±σ，内核对该维做解析积分。GPyTorch里有完整例子。)
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self,
+                 X_train:pd.DataFrame,
+                 y_train:pd.DataFrame,
+                 X_test:pd.DataFrame,
+                 y_test:pd.DataFrame,
+                 task_name:str,
+                 seed:int = 42):
+        super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
+        self.task_name = task_name
+
+    def _model(self):
+        train_x = self.X_train
+        train_y = self.y_train
+        test_x = self.X_test
+        test_y = self.y_test
+        task_name = self.task_name
+        pred_y = model_fit_predict(train_x, train_y, test_x)
+        r2 = r2_score(test_y, pred_y[task_name])
+        mse = mean_squared_error(test_y, pred_y[task_name])
+        mae = mean_absolute_error(test_y, pred_y[task_name])
+        print(f'Multitask GP Regression R2: {r2:.3f}, MSE: {mse:.3f}, MAE: {mae:.3f}')
 
 
 class int_multi(): # 先插补再回归
