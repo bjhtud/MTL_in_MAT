@@ -138,11 +138,37 @@ class GPReg(BaseDataset): # 传统机器学习，基于贝叶斯推理
         mae = mean_absolute_error(test_y, pred_y[task_name])
         print(f'Multitask GP Regression R2: {r2:.3f}, MSE: {mse:.3f}, MAE: {mae:.3f}')
 
+from Class import BaselineImputer
+class int_multi(BaseDataset): # 先插补再回归
+    def __init__(self,
+                 X_train:pd.DataFrame,
+                 y_train:pd.DataFrame,
+                 X_test:pd.DataFrame,
+                 y_test:pd.DataFrame,
+                 seed:int = 42):
+        super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
+    def _imputer(self):
+        X = self.X_train
+        y = self.y_train
+        x_imputed, y_imputed = BaselineImputer(random_state=self.seed).impute(X, y)
+        return x_imputed, y_imputed
 
-class int_multi(): # 先插补再回归
-
-    def __init__(self):
-        super().__init__()
+    def fit_pre(self):
+        '''
+        - 多任务学习模型(其实就是多元回归)：
+        - 多输出随机森林
+        - Ridge Regression 基于正则化
+        - Lasso Regression(MT Lasso) 基于正则化
+        - Elastic Net(MT Elastic Net) 基于正则化
+        - 多输出GP
+        - 多输出SVR (跟GP差不多)
+        - autosklearn 支持多元回归
+        '''
+        x = self.X_train
+        y = self.y_train
+        test_x = self.X_test
+        test_y = self.y_test
+        x_imputed, y_imputed = self._imputer()
 
 
 class SubSet(): # 子集模型
