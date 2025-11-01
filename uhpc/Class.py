@@ -1,3 +1,4 @@
+import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.experimental import enable_iterative_imputer   # 为了能够正常使用 InterativeImputer
@@ -19,13 +20,7 @@ class BaselineImputer:
                  svd_max_iter: int = 100,
                  svd_tol: float = 1e-4,
                  random_state: int = 42):
-        """
-        :param n_clusters:      聚类的个数
-        :param n_components:
-        :param svd_max_iter:
-        :param svd_tol:
-        :param random_state:
-        """
+
         self.n_clusters = n_clusters
         self.n_components = n_components
         self.svd_max_iter = svd_max_iter
@@ -37,12 +32,12 @@ class BaselineImputer:
     def impute(self,
                X: pd.DataFrame,
                y: pd.DataFrame,
-               method: str = 'drop',
-               miss_col=None,
+               method: str,
                **kwargs) -> (pd.DataFrame, pd.DataFrame):
 
         # 为了不修改原始数据，先复制一份并重置索引
         X = X.copy().reset_index(drop=True)
+
         if method == 'lm':
             return self._low_rank_impute(X, y)
         elif method == 'KNN':
@@ -61,24 +56,33 @@ class BaselineImputer:
         elif method == 'MIDA':
             return self._MIDA(X, y)
         elif method == 'softimpute':
-            pass
+            return self._MIDA(X, y)
         elif method == 'MICE':
-            pass
+            return self._MIDA(X, y)
         else:
             raise ValueError(f'Unknown method: {method}')
 
     def _MIDA(self,
-              X: pd.DataFrame,
-              y: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
-        dim = X.shape[1]
+              x: pd.DataFrame,
+              y: pd.DataFrame):
+        x.columns = x.columns.map(str)
+        y.columns = y.columns.map(str)
+        xy = pd.concat([x, y], axis=1)
+        dim = xy.shape[1]
         ae = Autoencoder(dim=dim)
-        ae.fit(X)
-        X_imputed = ae.transform(X)
-        return X_imputed, y
+        ae.fit(xy)
+        xy_imputed = ae.transform(xy)
+        k = y.shape[1]
+        x_imputed = pd.DataFrame(xy_imputed.iloc[:,:-k], index=x.index, columns=x.columns)
+        y_imputed = pd.DataFrame(xy_imputed.iloc[:,-k:], index=y.index, columns=y.columns)
+        return x_imputed, y_imputed
 
     def _RFE_mf(self,
                    X: pd.DataFrame,
-                   y: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
+                   y: pd.DataFrame):
+        X.columns = X.columns.map(str)
+        y.columns = y.columns.map(str)
+        xy = pd.concat([X, y], axis=1)
         mf = RFE_MissForest(
             rfe_n_estimators=100,
             rfe_cv=5,
@@ -86,32 +90,35 @@ class BaselineImputer:
             random_state=self.random_state,
             feature_selection=True
         )
-        mf.fit(X)
-        return mf.transform(X), y
+
+        mf.fit(xy)
+        xy_imputed = mf.transform(xy)
+        k = y.shape[1]
+        x_imputed = pd.DataFrame(xy_imputed.iloc[:,:-k], index=X.index, columns=X.columns)
+        y_imputed = pd.DataFrame(xy_imputed.iloc[:,-k:], index=y.index, columns=y.columns)
+        return x_imputed, y_imputed
 
     def _low_rank_impute(self,
                          X: pd.DataFrame,
-                         y: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
+                         y: pd.DataFrame):
         """
         对 X 和 y 分别做低秩矩阵分解填充：
         - 若矩阵只有一列，则直接用均值填充；
         - 否则，用 TruncatedSVD 做低秩分解（n_components），重构后将原来缺失的位置替换。
         """
-        X_clean = self._low_rank_impute_single(X)
-        if isinstance(y, pd.DataFrame) and y.shape[1] > 1:
-            y_clean = self._low_rank_impute_single(y)
-        else:
-            y_clean = y.fillna(y.mean())
-        return X_clean, y_clean
+        xy = pd.concat([X, y], axis=1)
+        xy_imputed = self._low_rank_impute_single(xy)
+        k = y.shape[1]
+        x_imputed = pd.DataFrame(xy_imputed.iloc[:,:-k], index=X.index, columns=X.columns)
+        y_imputed = pd.DataFrame(xy_imputed.iloc[:,-k:], index=y.index, columns=y.columns)
+
+        return x_imputed, y_imputed
 
     def _low_rank_impute_single(self, df: pd.DataFrame) -> pd.DataFrame:
         mask = df.isna()
-
         if df.shape[1] == 1:
             return df.fillna(df.mean())
-
         filled = df.fillna(0).values
-
         # 调整 n_compinents 不能超过列数 -1
         n_comp = min(self.n_components, df.shape[1] - 1)
         svd = TruncatedSVD(n_components=n_comp,
@@ -121,10 +128,8 @@ class BaselineImputer:
         W = svd.fit_transform(filled)   # (n_samples, n_comp)
         H = svd.components_             # (n_comp, n_features)
         reconstructed = np.dot(W, H)    # 重构矩阵，形状同 filled
-
         # 只替换原来的缺失位置
         filled[mask.values] = reconstructed[mask.values]
-
         return pd.DataFrame(filled, columns=df.columns, index=df.index)
 
     def _KNN_impute(self,
@@ -132,7 +137,8 @@ class BaselineImputer:
                     y: pd.DataFrame,
                     cv_splits: int = 3,
                     neighbors_range: range = range(1,21)
-                    ) -> (pd.DataFrame, pd.DataFrame):
+                    ):
+
         from sklearn.model_selection import KFold
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
         best_nbr, best_r2 = None, -np.inf
@@ -161,6 +167,7 @@ class BaselineImputer:
                     y_pred = model.predict(X_val_imp)
                     #print(y_val[col][mask].shape)
                     fold_r2.append(r2_score(y_val[col][mask], y_pred[mask]))
+
             if fold_r2:
                 mean_r2 = np.mean(fold_r2)
                 if mean_r2 > best_r2:
@@ -187,9 +194,12 @@ class BaselineImputer:
         k = y.shape[1]
         X_imp = pd.DataFrame(arr[:, :-k], columns=X.columns, index=X.index)
         y_imp = pd.DataFrame(arr[:, -k:], columns=y.columns, index=y.index)
+
         return X_imp, y_imp
 
-    def _interative_impute(self, X: pd.DataFrame, y: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
+    def _interative_impute(self, X: pd.DataFrame, y: pd.DataFrame):
+        X.columns = X.columns.map(str)
+        y.columns = y.columns.map(str)
         Xy_Interative = pd.concat([X, y], axis=1)
         imp_Interative = IterativeImputer(max_iter=100, random_state=self.random_state)
         imputed_Interative = imp_Interative.fit_transform(Xy_Interative)
@@ -303,14 +313,6 @@ class BaselineImputer:
         return p
 
     def _hyperimpute_methods(self,X, y, method, **kwargs):
-        """
-        支持 hyperimpute 插补方法
-        :param X:
-        :param y:
-        :param method:
-        :param kwargs:
-        :return:
-        """
 
         df = pd.concat([X, y], axis=1)
         if method in ['hyperimpute']:

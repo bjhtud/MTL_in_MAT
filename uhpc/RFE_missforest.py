@@ -5,8 +5,8 @@ from typing import Union
 import numpy as np
 import pandas as pd
 
-from src.helpers.errors import NotFittedError
-from src.helpers._validate import (
+from uhpc.helpers.errors import NotFittedError
+from uhpc.helpers._validate import (
     _validate_clf,
     _validate_rgr,
     _validate_initial_guess,
@@ -22,8 +22,8 @@ from src.helpers._validate import (
     _validate_verbose,
     _validate_column_consistency,
 )
-from metrics import pfc, nrmse
-from src.helpers._array import SafeArray
+from uhpc.helpers._metrics import pfc, nrmse
+from uhpc.helpers._array import SafeArray
 from typing import Any, Iterable, Dict
 from sklearn.base import BaseEstimator
 from tqdm import tqdm

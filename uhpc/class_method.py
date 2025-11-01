@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+from pandas import DataFrame
+
 from uhpc.method.LightGBM import ligbm_fit_predict
 from uhpc.method.HistGradientBoostingRegressor import hgbr_fit_predict
 from uhpc.method.HMlasso import hmlasso_fit_predict
@@ -106,12 +108,20 @@ class IterativeInter(BaseDataset): #迭代和堆叠
     * 堆叠(Multi-target regression via input space expansion: treating targets as inputs)
     * 回归链(同上，还有：leveraging multi-task learning regressor chains for small and sparse tabular data in materials design)
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self,
+                 X_train:pd.DataFrame,
+                 y_train:pd.DataFrame,
+                 X_test:pd.DataFrame,
+                 y_test:pd.DataFrame,
+                 task_name:str,
+                 seed:int = 42):
+
+        super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
+
+        self.task_name = task_name
 
 
 from uhpc.method.MultitaskGP import model_fit_predict
-
 class GPReg(BaseDataset): # 传统机器学习，基于贝叶斯推理
     '''
     * Multitask GP Regression (缺失特征：用 Uncertain Inputs——对缺失列设高斯分布 μ±σ，内核对该维做解析积分。GPyTorch里有完整例子。)
@@ -139,6 +149,7 @@ class GPReg(BaseDataset): # 传统机器学习，基于贝叶斯推理
         print(f'Multitask GP Regression R2: {r2:.3f}, MSE: {mse:.3f}, MAE: {mae:.3f}')
 
 from Class import BaselineImputer
+from sklearn.ensemble import RandomForestRegressor
 class int_multi(BaseDataset): # 先插补再回归
     def __init__(self,
                  X_train:pd.DataFrame,
@@ -147,11 +158,34 @@ class int_multi(BaseDataset): # 先插补再回归
                  y_test:pd.DataFrame,
                  seed:int = 42):
         super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
+
     def _imputer(self):
         X = self.X_train
         y = self.y_train
-        x_imputed, y_imputed = BaselineImputer(random_state=self.seed).impute(X, y)
-        return x_imputed, y_imputed
+        imp_methods = ['missforest', 'RFE_mf',
+                       'hyperimpute', #'MatImputer',
+                       'gain', 'sinkhorn', #'MICE',
+                       'KNN',
+                       'MIDA', 'miwae',
+                       #'softimpute',
+                       'gtmcc', 'lm', 'InterativeImputer',
+                       #'vae'
+                       ]
+        imputed_data = []
+        for imp_method in imp_methods:
+            print(f'Imputing method {imp_method}')
+            x_imputed, y_imputed = BaselineImputer(random_state=self.seed).impute(X, y, method=imp_method)
+
+            x_imputed = (pd.DataFrame(x_imputed, index=X.index, columns=X.columns)
+                         if not isinstance(x_imputed, pd.DataFrame) else x_imputed)
+            y_imputed = (pd.DataFrame(y_imputed, index=y.index, columns=y.columns)
+                         if not isinstance(y_imputed, pd.DataFrame) else y_imputed)
+
+            imputed_data.append({'X': x_imputed,
+                            'y': y_imputed,
+                            'method': imp_method})
+
+        return imputed_data, imp_methods
 
     def fit_pre(self):
         '''
@@ -164,12 +198,105 @@ class int_multi(BaseDataset): # 先插补再回归
         - 多输出SVR (跟GP差不多)
         - autosklearn 支持多元回归
         '''
-        x = self.X_train
-        y = self.y_train
-        test_x = self.X_test
-        test_y = self.y_test
-        x_imputed, y_imputed = self._imputer()
+        X_test = self.X_test
 
+        imputed_data, imp_methods = self._imputer()
+
+        pred_data = []
+
+        for data in imputed_data:
+            X_train = data['X']
+            y_train = data['y']
+            method = data['method']
+
+            # 1) 多输出随机森林（原生支持多输出）
+            from sklearn.ensemble import RandomForestRegressor
+
+            rf = RandomForestRegressor(
+                n_estimators=300,
+                max_depth=None,
+                random_state=0,
+                n_jobs=-1
+            )
+
+            rf.fit(X_train, y_train)
+            y_pred_rf = rf.predict(X_test)
+
+            pred_data.append({'method': method,
+                              'y_pred': y_pred_rf,
+                              'model': 'RandomForestRegressor'})
+
+            # 2) Ridge Regression（原生支持多输出）
+            from sklearn.linear_model import Ridge
+
+            ridge = Ridge(alpha=1.0, random_state=0)
+            ridge.fit(X_train, y_train)
+            y_pred_ridge = ridge.predict(X_test)
+            pred_data.append({'method': method,
+                              'y_pred': y_pred_ridge,
+                              'model': 'Ridge'})
+
+            # 3) MultiTask Lasso（多任务套件，适合多输出）
+            from sklearn.linear_model import MultiTaskLasso
+
+            mt_lasso = MultiTaskLasso(alpha=0.001, random_state=0, max_iter=5000)
+            mt_lasso.fit(X_train, y_train)
+            y_pred_mt = mt_lasso.predict(X_test)
+            pred_data.append({'method': method,
+                              'y_pred': y_pred_mt,
+                              'model': 'MultiTaskLasso'})
+
+            # 4) MultiTask Elastic Net（多任务套件，适合多输出）
+            from sklearn.linear_model import MultiTaskElasticNet
+
+            mt_en = MultiTaskElasticNet(alpha=0.001, l1_ratio=0.5, random_state=0, max_iter=5000)
+            mt_en.fit(X_train, y_train)
+            y_pred_mt_en = mt_en.predict(X_test)
+            pred_data.append({'method': method,
+                              'y_pred': y_pred_mt_en,
+                              'model': 'MultiTaskElasticNet'})
+
+            # 5) 多输出高斯过程回归（用 MultiOutputRegressor 包一层）
+            from sklearn.multioutput import MultiOutputRegressor
+            from sklearn.gaussian_process import GaussianProcessRegressor
+            from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+
+            kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=1.0)
+            gpr_base = GaussianProcessRegressor(kernel=kernel, alpha=1e-6, normalize_y=True, random_state=0)
+            gpr = MultiOutputRegressor(gpr_base, n_jobs=-1)
+            gpr.fit(X_train, y_train)
+            y_pred_gpr = gpr.predict(X_test)
+            pred_data.append({'method': method,
+                              'y_pred': y_pred_gpr,
+                              'model': 'MultiOutputRegressor'})
+
+            # 6) 多输出 SVR（用 MultiOutputRegressor 包一层）
+            from sklearn.svm import SVR
+            from sklearn.multioutput import MultiOutputRegressor
+
+            svr_base = SVR(C=10.0, epsilon=0.1, kernel='rbf', gamma='scale')
+            svr = MultiOutputRegressor(svr_base, n_jobs=-1)
+            svr.fit(X_train, y_train)
+            y_pred_svr = svr.predict(X_test)
+            pred_data.append({'method': method,
+                              'y_pred': y_pred_svr,
+                              'model': 'MultiOutputRegressor'})
+
+            # 7) auto-sklearn（用 MultiOutputRegressor 包一层以适配多输出）
+            # pip install auto-sklearn
+            #from autosklearn.regression import AutoSklearnRegressor
+            #from sklearn.multioutput import MultiOutputRegressor
+
+            #auto_base = AutoSklearnRegressor(
+            #    time_left_for_this_task=120,  # 总搜索时间（秒）
+            #    per_run_time_limit=30,  # 单模型训练上限（秒）
+            #    ensemble_size=25,
+            #    seed=0
+            #)
+            #auto = MultiOutputRegressor(auto_base, n_jobs=-1)
+            #auto.fit(X_train, y_train)
+            #y_pred = auto.predict(X_test)
+        return pred_data
 
 class SubSet(): # 子集模型
     def __init__(self):
