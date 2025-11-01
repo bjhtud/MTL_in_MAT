@@ -103,6 +103,14 @@ class ModelInter(BaseDataset): # 可以自动处理缺失的模型
         print(f'XGBoost R2: {xgboost_r2:.3f}, MSE: {xgboost_mse:.3f}, MAE: {xgboost_mae:.3f}')
         print(f'MT-ExtraTrees R2: {mtet_r2:.3f}, MSE: {mtet_mse:.3f}, MAE: {mtet_mae:.3f}')
 
+
+def _to_numpy(a):
+    # DataFrame/Series -> numpy；已经是ndarray则保持
+    if isinstance(a, (pd.DataFrame, pd.Series)):
+        return a.to_numpy()
+    return np.asarray(a)
+import xgboost as xgb
+from Input_space_expansion.Multi_target import sst, erc
 class IterativeInter(BaseDataset): #迭代和堆叠
     '''
     * 堆叠(Multi-target regression via input space expansion: treating targets as inputs)
@@ -113,12 +121,58 @@ class IterativeInter(BaseDataset): #迭代和堆叠
                  y_train:pd.DataFrame,
                  X_test:pd.DataFrame,
                  y_test:pd.DataFrame,
-                 task_name:str,
                  seed:int = 42):
 
         super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
 
-        self.task_name = task_name
+
+
+    def fit_predict(self,task_name):
+        x_train = self.X_train
+        y_train = self.y_train
+        x_test = self.X_test
+        y_test = self.y_test
+        list_of_target_names = y_test.columns.tolist()
+        base_model = xgb.XGBRegressor()
+
+        mask = ~y_train.isna().any(axis=1)
+
+        x_train = x_train.loc[mask]
+        y_train = y_train.loc[mask]
+
+        x_train = _to_numpy(x_train)
+        y_train = _to_numpy(y_train)
+        x_test = _to_numpy(x_test)
+        y_test = _to_numpy(y_test)
+
+        model_sst = sst(model=base_model,
+                    cv=2,
+                    seed=1,
+                    direct=False,
+                    verbose=True
+                    )
+
+        j = list_of_target_names.index(task_name)
+        model_sst.fit(x_train, y_train)
+        RMSE_sst = model_sst.score(x_test, y_test[:, j])
+        RRMSE_sst = model_sst.rrmse(x_test, y_test[:, j])
+
+        model_erc = erc(model=base_model,
+                    cv=2,
+                    chain=3,
+                    seed=1,
+                    direct=False,
+                    verbose=True,
+                    )
+
+        model_erc.fit(x_train, y_train)
+        RMSE_erc = model_erc.score(x_test, y_test[:, j])
+        RRMSE_erc = model_erc.rrmse(x_test, y_test[:, j])
+
+        print("\n", "RMSE_SST: \n",RMSE_sst)
+        print("\n", "RRMSE_SST: \n",RRMSE_sst)
+        print("\n", "RMSE_erc: \n",RMSE_erc)
+        print("\n", "RRMSE_erc: \n",RRMSE_erc)
 
 
 from uhpc.method.MultitaskGP import model_fit_predict
@@ -162,7 +216,7 @@ class int_multi(BaseDataset): # 先插补再回归
     def _imputer(self):
         X = self.X_train
         y = self.y_train
-        imp_methods = ['missforest', 'RFE_mf',
+        imp_methods = ['missforest', #'RFE_mf',
                        'hyperimpute', #'MatImputer',
                        'gain', 'sinkhorn', #'MICE',
                        'KNN',
@@ -173,7 +227,7 @@ class int_multi(BaseDataset): # 先插补再回归
                        ]
         imputed_data = []
         for imp_method in imp_methods:
-            print(f'Imputing method {imp_method}')
+            print(f'Imputing method: {imp_method}\n')
             x_imputed, y_imputed = BaselineImputer(random_state=self.seed).impute(X, y, method=imp_method)
 
             x_imputed = (pd.DataFrame(x_imputed, index=X.index, columns=X.columns)

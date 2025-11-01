@@ -138,7 +138,8 @@ class BaselineImputer:
                     cv_splits: int = 3,
                     neighbors_range: range = range(1,21)
                     ):
-
+        X.columns = X.columns.map(str)
+        y.columns = y.columns.map(str)
         from sklearn.model_selection import KFold
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
         best_nbr, best_r2 = None, -np.inf
