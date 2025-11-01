@@ -125,8 +125,6 @@ class IterativeInter(BaseDataset): #迭代和堆叠
 
         super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
 
-
-
     def fit_predict(self,task_name):
         x_train = self.X_train
         y_train = self.y_train
