@@ -33,12 +33,8 @@ class ModelInter(BaseDataset): # 可以自动处理缺失的模型
                  y_train:pd.DataFrame,
                  X_test:pd.DataFrame,
                  y_test:pd.DataFrame,
-                 task_name:str,
                  seed:int = 42):
-
         super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
-
-        self.task_name = task_name
 
     def _impute(self):
         '''
@@ -55,60 +51,58 @@ class ModelInter(BaseDataset): # 可以自动处理缺失的模型
         train_y = self.y_train
         test_x = self.X_test
         test_y = self.y_test
-        task_name = self.task_name
-
         # 预测y
-        lightgbm_pred_y = ligbm_fit_predict(train_x, train_y, test_x, test_y)
-        hgbr_pred_y = hgbr_fit_predict(train_x, train_y, test_x) # 不支持标签缺失
-        hmlasso_pred_y = hmlasso_fit_predict(train_x, train_y, test_x, task_name)
-        gbdt_pred_y = gbdt_fit_predict(train_x, train_y, test_x, task_name)
+        #lightgbm_pred_y = ligbm_fit_predict(train_x, train_y, test_x, test_y)
+        #hgbr_pred_y = hgbr_fit_predict(train_x, train_y, test_x) # 不支持标签缺失
+        #hmlasso_pred_y = hmlasso_fit_predict(train_x, train_y, test_x)
+        #gbdt_pred_y = gbdt_fit_predict(train_x, train_y, test_x)
         catboost_pred_y = catboost_fit_predict(train_x, train_y, test_x)
-        xgboost_pred_y = xgboost_fit_predict(train_x, train_y, test_x)
-        mtet_pred_y = mtet_fit_predict(train_x, train_y, test_x, test_y,task_name)
+        #xgboost_pred_y = xgboost_fit_predict(train_x, train_y, test_x)
+        mtet_pred_y = mtet_fit_predict(train_x, train_y, test_x, test_y)
 
         # 计算误差
-        lightgbm_r2 = r2_score(test_y, lightgbm_pred_y[task_name])
-        lightgbm_mse = mean_squared_error(test_y, lightgbm_pred_y[task_name])
-        lightgbm_mae = mean_absolute_error(test_y, lightgbm_pred_y[task_name])
+        #lightgbm_r2 = r2_score(test_y, lightgbm_pred_y)
+        #lightgbm_mse = mean_squared_error(test_y, lightgbm_pred_y)
+        #lightgbm_mae = mean_absolute_error(test_y, lightgbm_pred_y)
 
-        hgbr_r2 = r2_score(test_y, hgbr_pred_y[task_name])
-        hgbr_mse = mean_squared_error(test_y, hgbr_pred_y[task_name])
-        hgbr_mae = mean_absolute_error(test_y, hgbr_pred_y[task_name])
+        #hgbr_r2 = r2_score(test_y, hgbr_pred_y)
+        #hgbr_mse = mean_squared_error(test_y, hgbr_pred_y)
+        #hgbr_mae = mean_absolute_error(test_y, hgbr_pred_y)
 
-        hmlasso_r2 = r2_score(test_y, hmlasso_pred_y)
-        hmlasso_mse = mean_squared_error(test_y, hmlasso_pred_y)
-        hmlasso_mae = mean_absolute_error(test_y, hmlasso_pred_y)
+        #hmlasso_r2 = r2_score(test_y, hmlasso_pred_y)
+        #hmlasso_mse = mean_squared_error(test_y, hmlasso_pred_y)
+        #hmlasso_mae = mean_absolute_error(test_y, hmlasso_pred_y)
 
-        gbdt_r2 = r2_score(test_y, gbdt_pred_y)
-        gbdt_mse = mean_squared_error(test_y, gbdt_pred_y)
-        gbdt_mae = mean_absolute_error(test_y, gbdt_pred_y)
+        #gbdt_r2 = r2_score(test_y, gbdt_pred_y)
+        #gbdt_mse = mean_squared_error(test_y, gbdt_pred_y)
+        #gbdt_mae = mean_absolute_error(test_y, gbdt_pred_y)
 
-        catboost_r2 = r2_score(test_y, catboost_pred_y[task_name])
-        catboost_mse = mean_squared_error(test_y, catboost_pred_y[task_name])
-        catboost_mae = mean_absolute_error(test_y, catboost_pred_y[task_name])
+        catboost_r2 = r2_score(test_y, catboost_pred_y)
+        catboost_mse = mean_squared_error(test_y, catboost_pred_y)
+        catboost_mae = mean_absolute_error(test_y, catboost_pred_y)
 
-        xgboost_r2 = r2_score(test_y, xgboost_pred_y[task_name])
-        xgboost_mse = mean_squared_error(test_y, xgboost_pred_y[task_name])
-        xgboost_mae = mean_absolute_error(test_y, xgboost_pred_y[task_name])
+        #xgboost_r2 = r2_score(test_y, xgboost_pred_y)
+        #xgboost_mse = mean_squared_error(test_y, xgboost_pred_y)
+        #xgboost_mae = mean_absolute_error(test_y, xgboost_pred_y)
 
-        mtet_r2 = r2_score(test_y, mtet_pred_y[task_name])
-        mtet_mse = mean_squared_error(test_y, mtet_pred_y[task_name])
-        mtet_mae = mean_absolute_error(test_y, mtet_pred_y[task_name])
+        mtet_r2 = r2_score(test_y, mtet_pred_y)
+        mtet_mse = mean_squared_error(test_y, mtet_pred_y)
+        mtet_mae = mean_absolute_error(test_y, mtet_pred_y)
 
-        print(f'LightGBM R2: {lightgbm_r2:.3f}, MSE: {lightgbm_mse:.3f}, MAE: {lightgbm_mae:.3f}')
-        print(f'HistGradientBoostingRegressor R2: {hgbr_r2:.3f}, MSE: {hgbr_mse:.3f}, MAE: {hgbr_mae:.3f}')
-        print(f'HMlasso R2: {hmlasso_r2:.3f}, MSE: {hmlasso_mse:.3f}, MAE: {hmlasso_mae:.3f}')
-        print(f'GBDT R2: {gbdt_r2:.3f}, MSE: {gbdt_mse:.3f}, MAE: {gbdt_mae:.3f}')
+        #print(f'LightGBM R2: {lightgbm_r2:.3f}, MSE: {lightgbm_mse:.3f}, MAE: {lightgbm_mae:.3f}')
+        #print(f'HistGradientBoostingRegressor R2: {hgbr_r2:.3f}, MSE: {hgbr_mse:.3f}, MAE: {hgbr_mae:.3f}')
+        #print(f'HMlasso R2: {hmlasso_r2:.3f}, MSE: {hmlasso_mse:.3f}, MAE: {hmlasso_mae:.3f}')
+        #print(f'GBDT R2: {gbdt_r2:.3f}, MSE: {gbdt_mse:.3f}, MAE: {gbdt_mae:.3f}')
         print(f'CatBoost R2: {catboost_r2:.3f}, MSE: {catboost_mse:.3f}, MAE: {catboost_mae:.3f}')
-        print(f'XGBoost R2: {xgboost_r2:.3f}, MSE: {xgboost_mse:.3f}, MAE: {xgboost_mae:.3f}')
+        #print(f'XGBoost R2: {xgboost_r2:.3f}, MSE: {xgboost_mse:.3f}, MAE: {xgboost_mae:.3f}')
         print(f'MT-ExtraTrees R2: {mtet_r2:.3f}, MSE: {mtet_mse:.3f}, MAE: {mtet_mae:.3f}')
-
 
 def _to_numpy(a):
     # DataFrame/Series -> numpy；已经是ndarray则保持
     if isinstance(a, (pd.DataFrame, pd.Series)):
         return a.to_numpy()
     return np.asarray(a)
+
 import xgboost as xgb
 from Input_space_expansion.Multi_target import sst, erc
 class IterativeInter(BaseDataset): #迭代和堆叠
@@ -125,7 +119,7 @@ class IterativeInter(BaseDataset): #迭代和堆叠
 
         super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
 
-    def fit_predict(self,task_name):
+    def fit_predict(self):
         x_train = self.X_train
         y_train = self.y_train
         x_test = self.X_test
@@ -133,10 +127,10 @@ class IterativeInter(BaseDataset): #迭代和堆叠
         list_of_target_names = y_test.columns.tolist()
         base_model = xgb.XGBRegressor()
 
-        mask = ~y_train.isna().any(axis=1)
+        #mask = ~y_train.isna().any(axis=1)
 
-        x_train = x_train.loc[mask]
-        y_train = y_train.loc[mask]
+        #x_train = x_train.loc[mask]
+        #y_train = y_train.loc[mask]
 
         x_train = _to_numpy(x_train)
         y_train = _to_numpy(y_train)
@@ -150,10 +144,9 @@ class IterativeInter(BaseDataset): #迭代和堆叠
                     verbose=True
                     )
 
-        j = list_of_target_names.index(task_name)
         model_sst.fit(x_train, y_train)
-        RMSE_sst = model_sst.score(x_test, y_test[:, j])
-        RRMSE_sst = model_sst.rrmse(x_test, y_test[:, j])
+        RMSE_sst = model_sst.score(x_test, y_test)
+        RRMSE_sst = model_sst.rrmse(x_test, y_test)
 
         model_erc = erc(model=base_model,
                     cv=2,
@@ -164,8 +157,8 @@ class IterativeInter(BaseDataset): #迭代和堆叠
                     )
 
         model_erc.fit(x_train, y_train)
-        RMSE_erc = model_erc.score(x_test, y_test[:, j])
-        RRMSE_erc = model_erc.rrmse(x_test, y_test[:, j])
+        RMSE_erc = model_erc.score(x_test, y_test)
+        RRMSE_erc = model_erc.rrmse(x_test, y_test)
 
         print("\n", "RMSE_SST: \n",RMSE_sst)
         print("\n", "RRMSE_SST: \n",RRMSE_sst)
@@ -183,21 +176,20 @@ class GPReg(BaseDataset): # 传统机器学习，基于贝叶斯推理
                  y_train:pd.DataFrame,
                  X_test:pd.DataFrame,
                  y_test:pd.DataFrame,
-                 task_name:str,
                  seed:int = 42):
         super().__init__(X_train = X_train, y_train=y_train, X_test=X_test, y_test=y_test, seed=seed)
-        self.task_name = task_name
+
 
     def _model(self):
         train_x = self.X_train
         train_y = self.y_train
         test_x = self.X_test
         test_y = self.y_test
-        task_name = self.task_name
+
         pred_y = model_fit_predict(train_x, train_y, test_x)
-        r2 = r2_score(test_y, pred_y[task_name])
-        mse = mean_squared_error(test_y, pred_y[task_name])
-        mae = mean_absolute_error(test_y, pred_y[task_name])
+        r2 = r2_score(test_y, pred_y)
+        mse = mean_squared_error(test_y, pred_y)
+        mae = mean_absolute_error(test_y, pred_y)
         print(f'Multitask GP Regression R2: {r2:.3f}, MSE: {mse:.3f}, MAE: {mae:.3f}')
 
 from Class import BaselineImputer

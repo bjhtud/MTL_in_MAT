@@ -152,3 +152,6 @@ class DataSet_uhpc:
     def get_name(self):
 
         return self.task_name
+
+    def get_data(self):
+        return self.train_df, self.X_test, self.y_test

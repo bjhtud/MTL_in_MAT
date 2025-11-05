@@ -4,9 +4,8 @@
 '''
 from sklearn.ensemble import GradientBoostingRegressor
 
-def gbdt_fit_predict(train_x, train_y, test_x, task_name):
+def gbdt_fit_predict(train_x, train_y, test_x,):
     mask = ~train_y.isna().any(axis=1)
-    train_y = train_y[task_name]
     train_x = train_x.loc[mask]
     train_y = train_y.loc[mask]
 

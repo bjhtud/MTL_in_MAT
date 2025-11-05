@@ -152,12 +152,12 @@ class HMLasso:
         # 简单线性预测：X @ beta（如果你有截距，记得补）
         return X @ self.coef_
 
-def hmlasso_train(X_train, y_train,task_name, lam=0.1, **kwargs):
-    y_train = y_train[task_name]
+def hmlasso_train(X_train, y_train, lam=0.1, **kwargs):
+
     model = HMLasso(**kwargs).fit(X_train, y_train, lam)
     return model
 
-def hmlasso_fit_predict(train_x, train_y, test_x, task_name):
-    model = hmlasso_train(train_x, train_y, task_name, lam=0.1)
+def hmlasso_fit_predict(train_x, train_y, test_x):
+    model = hmlasso_train(train_x, train_y, lam=0.1)
     pred_y = model.predict(test_x)
     return pred_y
