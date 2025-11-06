@@ -22,23 +22,23 @@
 
 - 插补方法：
 
-| 名字                             | 引用量 | 来源                                                                                                                     |
+| 名字                             | 引用量   | 来源                                                                                                                     |
 |--------------------------------|-------|------------------------------------------------------------------------------------------------------------------------|
-| MissForest                     |   | (核心文章)                                                                                                                 |
-| RFE-MissForest                 | 7 | A novel MissForest-based missing values imputation approach with recursive feature elimination in medical applications |
-| Hyperimpute                    |  | (核心文章)                                                                                                                 |
-| KNN based method (MatImputer)  |   | (核心文章)                                                                                                                 |
-| GAIN                           |   | (核心文章)                                                                                                                 |
-| Sinkhorn                       |   | (核心文章)                                                                                                                 |
+| MissForest                     |       | (核心文章)                                                                                                                 |
+| RFE-MissForest                 | 7     | A novel MissForest-based missing values imputation approach with recursive feature elimination in medical applications |
+| Hyperimpute                    |       | (核心文章)                                                                                                                 |
+| KNN based method (MatImputer)  |       | (核心文章)                                                                                                                 |
+| GAIN                           |       | (核心文章)                                                                                                                 |
+| Sinkhorn                       |       | (核心文章)                                                                                                                 |
 | MICE (Iterativeimputer)        | 19525 | mice: Multivariate Imputation by Chained Equations in R                                                                |
-| KNN插补                          |   |                                                                                                                        |
-| MIDA(去噪自编码器)                   | 429  | MIDA: Multiple Imputation using Denoising Autoencoders                                                                 |
-| MIWAE(变分自编码器)                  | 358  | MIWAE: Deep Generative Modelling and Imputation of Incomplete Data Sets                                                |
+| KNN插补                          |       |                                                                                                                        |
+| MIDA(去噪自编码器)                   | 429   | MIDA: Multiple Imputation using Denoising Autoencoders                                                                 |
+| MIWAE(变分自编码器)                  | 358   | MIWAE: Deep Generative Modelling and Imputation of Incomplete Data Sets                                                |
 | SoftImpute (低秩矩阵改良)(还有其他方法在包中) | 686   | Matrix Completion and Low-Rank SVD via Fast Alternating Least Squares                                                  |
-| 低秩矩阵                           |   |                                                                                                                        |
-| 堆叠                             | 422  | Multi-target regression via input space expansion: treating targets as inputs                                          |
-| VAE                            |   | 还没找到                                                                                                                   |
-
+| 低秩矩阵                           | 9     | Prediction of drug side effects with transductive matrix co-completion                                                 |
+| 堆叠                             | 422   | Multi-target regression via input space expansion: treating targets as inputs                                          |
+| VAE                            | 32    | Missing Data Imputation and Acquisition with Deep Hierarchical Models and Hamiltonian Monte Carlo                      |
+   
 - 多任务学习模型(其实就是多元回归)：
   - 多输出随机森林
   - Ridge Regression 基于正则化
