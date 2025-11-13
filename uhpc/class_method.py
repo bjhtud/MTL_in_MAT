@@ -165,7 +165,6 @@ class IterativeInter(BaseDataset): #迭代和堆叠
         print("\n", "RMSE_erc: \n",RMSE_erc)
         print("\n", "RRMSE_erc: \n",RRMSE_erc)
 
-
 from uhpc.method.MultitaskGP import model_fit_predict
 class GPReg(BaseDataset): # 传统机器学习，基于贝叶斯推理
     '''
@@ -222,6 +221,7 @@ class int_multi(BaseDataset): # 先插补再回归
 
             x_imputed = (pd.DataFrame(x_imputed, index=X.index, columns=X.columns)
                          if not isinstance(x_imputed, pd.DataFrame) else x_imputed)
+
             y_imputed = (pd.DataFrame(y_imputed, index=y.index, columns=y.columns)
                          if not isinstance(y_imputed, pd.DataFrame) else y_imputed)
 
@@ -326,20 +326,6 @@ class int_multi(BaseDataset): # 先插补再回归
                               'y_pred': y_pred_svr,
                               'model': 'MultiOutputRegressor'})
 
-            # 7) auto-sklearn（用 MultiOutputRegressor 包一层以适配多输出）
-            # pip install auto-sklearn
-            #from autosklearn.regression import AutoSklearnRegressor
-            #from sklearn.multioutput import MultiOutputRegressor
-
-            #auto_base = AutoSklearnRegressor(
-            #    time_left_for_this_task=120,  # 总搜索时间（秒）
-            #    per_run_time_limit=30,  # 单模型训练上限（秒）
-            #    ensemble_size=25,
-            #    seed=0
-            #)
-            #auto = MultiOutputRegressor(auto_base, n_jobs=-1)
-            #auto.fit(X_train, y_train)
-            #y_pred = auto.predict(X_test)
         return pred_data
 
 class SubSet(): # 子集模型

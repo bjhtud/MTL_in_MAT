@@ -23,3 +23,20 @@ UHPC为核心数据集
     - 问题：取出测试集后，训练集不存在完整的数据，在一些不能直接处理缺失的模型上，无法提取到有效信息。
 ## 
 
+
+数据集做标准化。 stancard scaler
+
+from sklearn.preprocessing import StandardScaler
+
+def scale_data(X: pd.DataFrame) -> pd.DataFrame:
+    preproc = StandardScaler()
+    cols = X.columns
+    return pd.DataFrame(preproc.fit_transform(X), columns=cols)
+
+随机种子固定，做5-10个，
+先做一个，看看结果
+
+
+都用XgBoost
+
+
