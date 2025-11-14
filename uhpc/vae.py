@@ -4,6 +4,7 @@
 # =========================================
 import math
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -542,6 +543,56 @@ class HH_VAEM(_BaseImputer):
         Xn_f = Xn.copy()
         Xn_f[miss] = rec_mean[miss]
         return self.scaler.inverse_transform(Xn_f)
+
+
+class VAEImputer:
+    """
+    统一封装，提供 fit_transform 接口，可选择不同 VAE 变体。
+    """
+    def __init__(self, variant: str = "vanilla", **kwargs):
+        self.variant = (variant or "vanilla").lower()
+        self.kwargs = kwargs
+        self._model = None
+        self._columns = None
+        self._index = None
+
+    def _build_model(self):
+        mapping = {
+            "vanilla": VanillaVAE,
+            "vae": VanillaVAE,
+            "miwae": MIWAE,
+            "h_vae": H_VAEM,
+            "hver": H_VAEM,
+            "hmc_vae": HMC_VAE,
+            "hh_vaem": HH_VAEM,
+        }
+        if self.variant not in mapping:
+            raise ValueError(f"Unknown VAE variant: {self.variant}")
+        cls = mapping[self.variant]
+        return cls(**self.kwargs)
+
+    def fit(self, df: pd.DataFrame):
+        if not isinstance(df, pd.DataFrame):
+            df = pd.DataFrame(df)
+        self._columns = df.columns
+        self._index = df.index
+        self._model = self._build_model()
+        self._model.fit(df.to_numpy(dtype=np.float32))
+        return self
+
+    def transform(self, df: pd.DataFrame):
+        if self._model is None:
+            raise RuntimeError("VAEImputer must be fitted before calling transform.")
+        if not isinstance(df, pd.DataFrame):
+            df = pd.DataFrame(df, columns=self._columns)
+        arr = df.to_numpy(dtype=np.float32)
+        output = self._model.transform(arr)
+        return pd.DataFrame(output, columns=df.columns, index=df.index)
+
+    def fit_transform(self, df: pd.DataFrame):
+        self.fit(df)
+        output = self._model.transform(df.to_numpy(dtype=np.float32))
+        return pd.DataFrame(output, columns=self._columns, index=self._index)
 
 
 # -----------------------------

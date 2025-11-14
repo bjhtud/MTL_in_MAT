@@ -21,6 +21,23 @@ from uhpc.method.MTExtraTress import mtet_fit_predict
 from uhpc.method.MultitaskGP import model_fit_predict as multitask_gp_predict
 from uhpc.method.XGBoost import xgboost_fit_predict
 
+README_IMPUTATION_METHODS = [
+    ("MissForest", "missforest"),
+    ("RFE-MissForest", "RFE_mf"),
+    ("Hyperimpute", "hyperimpute"),
+    ("KNN based method (MatImputer)", "KNN"),
+    ("GAIN", "gain"),
+    ("Sinkhorn", "sinkhorn"),
+    ("MICE (Iterativeimputer)", "InterativeImputer"),
+    ("KNN插补", "KNN"),
+    ("MIDA(去噪自编码器)", "MIDA"),
+    ("MIWAE(变分自编码器)", "miwae"),
+    ("SoftImpute (低秩矩阵改良)", "lm"),
+    ("低秩矩阵", "lm"),
+    ("堆叠", "stacking"),
+    ("VAE", "vae"),
+]
+
 
 def _as_frame(data) -> pd.DataFrame:
     if isinstance(data, pd.DataFrame):
@@ -125,6 +142,9 @@ class BaseDataset:
         self.y_train = _as_frame(y_train)
         self.y_test = _as_frame(y_test)
 
+        self._label_impute_cache: dict[str, pd.DataFrame] = {}
+        self._full_impute_cache: dict[str, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = {}
+
     def _score_predictions(self, predictions: dict[str, pd.DataFrame]) -> pd.DataFrame:
         records = []
         for name, pred in predictions.items():
@@ -139,6 +159,11 @@ class BaseDataset:
         y_imp = _match_template(y_imp, self.y_train)
         return y_imp
 
+    def _get_imputed_labels(self, method: str) -> pd.DataFrame:
+        if method not in self._label_impute_cache:
+            self._label_impute_cache[method] = self._impute_labels(method)
+        return self._label_impute_cache[method]
+
     def _impute_all(self, method: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         x_imp_train, y_imp_train = BaselineImputer(random_state=self.seed).impute(self.X_train, self.y_train, method=method)
         x_imp_test, _ = BaselineImputer(random_state=self.seed).impute(self.X_test, self.y_test, method=method)
@@ -146,6 +171,27 @@ class BaseDataset:
         y_train_filled = _match_template(y_imp_train, self.y_train)
         X_test_filled = _match_template(x_imp_test, self.X_test)
         return X_train_filled, y_train_filled, X_test_filled
+
+    def _get_full_imputed_data(self, method: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        if method not in self._full_impute_cache:
+            self._full_impute_cache[method] = self._impute_all(method)
+        return self._full_impute_cache[method]
+
+    @staticmethod
+    def _format_combo_name(model_name: str, imputer_label: str) -> str:
+        def _slug(text: str) -> str:
+            allowed = []
+            for ch in text:
+                if ch.isalnum():
+                    allowed.append(ch.lower())
+                else:
+                    allowed.append("_")
+            slug = "".join(allowed)
+            while "__" in slug:
+                slug = slug.replace("__", "_")
+            return slug.strip("_")
+
+        return f"{_slug(model_name)}__{_slug(imputer_label)}"
 
 
 class DirectMissingModels(BaseDataset):
@@ -172,9 +218,9 @@ class FeatureMissingModels(BaseDataset):
     先对标签做插补，再将原始特征（含缺失）与插补标签一同训练。
     """
 
-    def __init__(self, *args, label_impute_method: str = "missforest", **kwargs):
+    def __init__(self, *args, impute_methods: list[tuple[str, str | None]] | None = None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.label_impute_method = label_impute_method
+        self.impute_methods = impute_methods or README_IMPUTATION_METHODS
 
     def _run_hmlasso(self, y_filled: pd.DataFrame) -> pd.DataFrame:
         preds = []
@@ -203,25 +249,44 @@ class FeatureMissingModels(BaseDataset):
             "erc_xgb": pd.DataFrame(pred_erc, index=self.X_test.index, columns=y_filled.columns),
         }
 
-    def run(self, model_names: list[str] | None = None, include_iterative: bool = True) -> pd.DataFrame:
-        y_filled = self._impute_labels(self.label_impute_method)
-
+    def run(
+        self,
+        model_names: list[str] | None = None,
+        include_iterative: bool = True,
+        impute_methods: list[tuple[str, str | None]] | None = None,
+    ) -> pd.DataFrame:
         registry = {
-            "lightgbm": lambda: ligbm_fit_predict(self.X_train, y_filled, self.X_test, self.y_test),
-            "hist_gbr": lambda: hgbr_fit_predict(self.X_train, y_filled, self.X_test),
-            "xgboost": lambda: xgboost_fit_predict(self.X_train, y_filled, self.X_test),
-            "hmlasso": lambda: self._run_hmlasso(y_filled),
+            "lightgbm": lambda y_filled: ligbm_fit_predict(self.X_train, y_filled, self.X_test, self.y_test),
+            "hist_gbr": lambda y_filled: hgbr_fit_predict(self.X_train, y_filled, self.X_test),
+            "xgboost": lambda y_filled: xgboost_fit_predict(self.X_train, y_filled, self.X_test),
+            "hmlasso": lambda y_filled: self._run_hmlasso(y_filled),
         }
 
         names = _select_model_names(model_names, registry)
         predictions = {}
-        for name in names:
-            predictions[f"{name}__{self.label_impute_method}"] = registry[name]()
+        method_seq = impute_methods or self.impute_methods
 
-        if include_iterative:
-            iterative_preds = self._iterative_predictions(y_filled)
-            for name, pred in iterative_preds.items():
-                predictions[f"{name}__{self.label_impute_method}"] = pred
+        for display_name, method_key in method_seq:
+            if method_key is None:
+                print(f"[WARN] 插补方法 `{display_name}` 暂未实现，跳过。")
+                continue
+
+            try:
+                y_filled = self._get_imputed_labels(method_key)
+            except Exception as exc:
+                print(f"[WARN] 插补 `{display_name}` 失败：{exc}")
+                continue
+
+            for name in names:
+                pred = registry[name](y_filled)
+                combo = self._format_combo_name(name, display_name)
+                predictions[combo] = pred
+
+            if include_iterative:
+                iterative_preds = self._iterative_predictions(y_filled)
+                for iter_name, pred in iterative_preds.items():
+                    combo = self._format_combo_name(iter_name, display_name)
+                    predictions[combo] = pred
 
         return self._score_predictions(predictions)
 
@@ -231,9 +296,9 @@ class CompleteDataModels(BaseDataset):
     类别三：模型要求特征和标签均完整，需要先同时对 X、y 做插补。
     """
 
-    def __init__(self, *args, impute_method: str = "missforest", **kwargs):
+    def __init__(self, *args, impute_methods: list[tuple[str, str | None]] | None = None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.impute_method = impute_method
+        self.impute_methods = impute_methods or README_IMPUTATION_METHODS
 
     def _multioutput_gp(self, X_train: pd.DataFrame, y_train: pd.DataFrame, X_test: pd.DataFrame) -> pd.DataFrame:
         kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=1.0)
@@ -250,46 +315,63 @@ class CompleteDataModels(BaseDataset):
         pred = model.predict(X_test)
         return pd.DataFrame(pred, index=X_test.index, columns=y_train.columns)
 
-    def run(self, model_names: list[str] | None = None, include_multitask_gp: bool = True) -> pd.DataFrame:
-        X_train_filled, y_train_filled, X_test_filled = self._impute_all(self.impute_method)
-
+    def run(
+        self,
+        model_names: list[str] | None = None,
+        include_multitask_gp: bool = True,
+        impute_methods: list[tuple[str, str | None]] | None = None,
+    ) -> pd.DataFrame:
         registry = {
-            "random_forest": lambda: pd.DataFrame(
+            "random_forest": lambda Xtr, ytr, Xte: pd.DataFrame(
                 RandomForestRegressor(
                     n_estimators=300,
                     max_depth=None,
                     random_state=self.seed,
                     n_jobs=-1,
-                ).fit(X_train_filled, y_train_filled).predict(X_test_filled),
-                index=X_test_filled.index,
-                columns=y_train_filled.columns,
+                ).fit(Xtr, ytr).predict(Xte),
+                index=Xte.index,
+                columns=ytr.columns,
             ),
-            "ridge": lambda: pd.DataFrame(
-                Ridge(alpha=1.0, random_state=self.seed).fit(X_train_filled, y_train_filled).predict(X_test_filled),
-                index=X_test_filled.index,
-                columns=y_train_filled.columns,
+            "ridge": lambda Xtr, ytr, Xte: pd.DataFrame(
+                Ridge(alpha=1.0, random_state=self.seed).fit(Xtr, ytr).predict(Xte),
+                index=Xte.index,
+                columns=ytr.columns,
             ),
-            "multitask_lasso": lambda: pd.DataFrame(
-                MultiTaskLasso(alpha=0.001, random_state=self.seed, max_iter=5000).fit(X_train_filled, y_train_filled).predict(X_test_filled),
-                index=X_test_filled.index,
-                columns=y_train_filled.columns,
+            "multitask_lasso": lambda Xtr, ytr, Xte: pd.DataFrame(
+                MultiTaskLasso(alpha=0.001, random_state=self.seed, max_iter=5000).fit(Xtr, ytr).predict(Xte),
+                index=Xte.index,
+                columns=ytr.columns,
             ),
-            "multitask_elasticnet": lambda: pd.DataFrame(
-                MultiTaskElasticNet(alpha=0.001, l1_ratio=0.5, random_state=self.seed, max_iter=5000).fit(X_train_filled, y_train_filled).predict(X_test_filled),
-                index=X_test_filled.index,
-                columns=y_train_filled.columns,
+            "multitask_elasticnet": lambda Xtr, ytr, Xte: pd.DataFrame(
+                MultiTaskElasticNet(alpha=0.001, l1_ratio=0.5, random_state=self.seed, max_iter=5000).fit(Xtr, ytr).predict(Xte),
+                index=Xte.index,
+                columns=ytr.columns,
             ),
-            "multioutput_gp": lambda: self._multioutput_gp(X_train_filled, y_train_filled, X_test_filled),
-            "multioutput_svr": lambda: self._multioutput_svr(X_train_filled, y_train_filled, X_test_filled),
-            "gbdt": lambda: gbdt_fit_predict(X_train_filled, y_train_filled, X_test_filled),
+            "multioutput_gp": lambda Xtr, ytr, Xte: self._multioutput_gp(Xtr, ytr, Xte),
+            "multioutput_svr": lambda Xtr, ytr, Xte: self._multioutput_svr(Xtr, ytr, Xte),
+            "gbdt": lambda Xtr, ytr, Xte: gbdt_fit_predict(Xtr, ytr, Xte),
         }
 
         if include_multitask_gp:
-            registry["multitask_gp"] = lambda: multitask_gp_predict(X_train_filled, y_train_filled, X_test_filled)
+            registry["multitask_gp"] = lambda Xtr, ytr, Xte: multitask_gp_predict(Xtr, ytr, Xte)
 
         names = _select_model_names(model_names, registry)
         predictions = {}
-        for name in names:
-            predictions[f"{name}__{self.impute_method}"] = registry[name]()
+        method_seq = impute_methods or self.impute_methods
+
+        for display_name, method_key in method_seq:
+            if method_key is None:
+                print(f"[WARN] 插补方法 `{display_name}` 暂未实现，跳过。")
+                continue
+            try:
+                X_train_filled, y_train_filled, X_test_filled = self._get_full_imputed_data(method_key)
+            except Exception as exc:
+                print(f"[WARN] 插补 `{display_name}` 失败：{exc}")
+                continue
+
+            for name in names:
+                pred = registry[name](X_train_filled, y_train_filled, X_test_filled)
+                combo = self._format_combo_name(name, display_name)
+                predictions[combo] = pred
 
         return self._score_predictions(predictions)

@@ -3,6 +3,7 @@
 特征可以缺失
 '''
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.multioutput import MultiOutputRegressor
 import pandas as pd
 
 def gbdt_fit_predict(train_x, train_y, test_x,):
@@ -10,7 +11,7 @@ def gbdt_fit_predict(train_x, train_y, test_x,):
     train_x = train_x.loc[mask]
     train_y = train_y.loc[mask]
 
-    reg = GradientBoostingRegressor(
+    base = GradientBoostingRegressor(
         n_estimators=2000,
         learning_rate=0.03,
         max_depth=3,
@@ -21,6 +22,7 @@ def gbdt_fit_predict(train_x, train_y, test_x,):
         tol=1e-4
     )
 
+    reg = MultiOutputRegressor(base)
     reg.fit(train_x, train_y)
     pred_y = reg.predict(test_x)
     return pd.DataFrame(pred_y, index=test_x.index, columns=train_y.columns)

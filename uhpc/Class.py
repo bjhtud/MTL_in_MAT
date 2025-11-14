@@ -1,8 +1,10 @@
+import numpy as np
 import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.experimental import enable_iterative_imputer   # 为了能够正常使用 InterativeImputer
 from sklearn.impute import IterativeImputer
+from sklearn.ensemble import RandomForestRegressor
 from scipy.linalg import svd, norm, inv
 from hyperimpute.plugins.imputers import Imputers
 from sklearn.metrics import r2_score
@@ -49,7 +51,7 @@ class BaselineImputer:
             S = rbf_kernel(X, gamma=0.5)
             np.fill_diagonal(S, 0)
             return self._gtmcc_impute(X, y, S)
-        elif method in ['hyperimpute', 'missforest', 'gain', 'sinkhorn', 'miwae']:
+        elif method in ['hyperimpute', 'missforest', 'gain', 'sinkhorn', 'miwae', 'vae']:
             return self._hyperimpute_methods(X, y, method, **kwargs)
         elif method == 'RFE_mf':
             return self._RFE_mf(X, y)
@@ -59,6 +61,8 @@ class BaselineImputer:
             return self._MIDA(X, y)
         elif method == 'MICE':
             return self._MIDA(X, y)
+        elif method == 'stacking':
+            return self._stacking_impute(X, y, **kwargs)
         else:
             raise ValueError(f'Unknown method: {method}')
 
@@ -198,6 +202,58 @@ class BaselineImputer:
 
         return X_imp, y_imp
 
+    def _stacking_impute(
+        self,
+        X: pd.DataFrame,
+        y: pd.DataFrame,
+        *,
+        n_rounds: int = 3,
+        base_model_factory=None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        堆叠插补：利用其他任务标签作为输入，迭代训练回归模型填充缺失标签。
+        """
+        n_rounds = max(1, int(n_rounds))
+
+        X_model = X.copy()
+        for col in X_model.columns:
+            series = X_model[col]
+            mean_val = series.mean()
+            if pd.isna(mean_val):
+                mean_val = 0.0
+            X_model[col] = series.fillna(mean_val)
+
+        y_filled = y.copy()
+        y_filled = y_filled.fillna(y_filled.mean())
+        original_missing = y.isna()
+        order = list(y.columns)
+
+        def _build_model():
+            if base_model_factory is not None:
+                if callable(base_model_factory):
+                    return base_model_factory()
+                return base_model_factory
+            return RandomForestRegressor(
+                n_estimators=300,
+                max_depth=None,
+                random_state=self.random_state,
+                n_jobs=-1,
+            )
+
+        for _ in range(n_rounds):
+            for col in order:
+                mask = ~y[col].isna()
+                if mask.sum() < 5:
+                    continue
+                features = pd.concat([X_model, y_filled.drop(columns=col)], axis=1)
+                model = _build_model()
+                model.fit(features.loc[mask], y.loc[mask, col])
+                preds = pd.Series(model.predict(features), index=y.index)
+                missing_mask = original_missing[col]
+                y_filled.loc[missing_mask, col] = preds.loc[missing_mask]
+
+        return X.copy(), y_filled
+
     def _interative_impute(self, X: pd.DataFrame, y: pd.DataFrame):
         X.columns = X.columns.map(str)
         y.columns = y.columns.map(str)
@@ -316,7 +372,7 @@ class BaselineImputer:
     def _hyperimpute_methods(self,X, y, method, **kwargs):
 
         df = pd.concat([X, y], axis=1)
-        if method in ['hyperimpute']:
+        if method == 'hyperimpute':
             plugin = Imputers().get('hyperimpute', **kwargs)
         elif method == 'missforest':
             plugin = Imputers().get('missforest', **kwargs)
@@ -326,6 +382,9 @@ class BaselineImputer:
             plugin = Imputers().get('sinkhorn', **kwargs)
         elif method == 'miwae':
             plugin = Imputers().get('miwae', **kwargs)
+        elif method == 'vae':
+            from uhpc.vae import VAEImputer
+            plugin = VAEImputer(**kwargs)
         else:
             raise ValueError(f'Unknown method: {method}')
         df_filled = plugin.fit_transform(df)
