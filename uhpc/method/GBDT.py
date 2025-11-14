@@ -3,6 +3,7 @@
 特征可以缺失
 '''
 from sklearn.ensemble import GradientBoostingRegressor
+import pandas as pd
 
 def gbdt_fit_predict(train_x, train_y, test_x,):
     mask = ~train_y.isna().any(axis=1)
@@ -22,4 +23,4 @@ def gbdt_fit_predict(train_x, train_y, test_x,):
 
     reg.fit(train_x, train_y)
     pred_y = reg.predict(test_x)
-    return pred_y
+    return pd.DataFrame(pred_y, index=test_x.index, columns=train_y.columns)
