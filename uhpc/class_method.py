@@ -11,7 +11,7 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
 
-from Input_space_expansion.Multi_target import erc, sst
+from uhpc.Input_space_expansion import erc, sst
 from uhpc.Class import BaselineImputer
 from uhpc.method.CatBoost import catboost_fit_predict
 from uhpc.method.GBDT import gbdt_fit_predict
