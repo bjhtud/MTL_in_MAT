@@ -1,8 +1,10 @@
 import sys
 import warnings
+from datetime import datetime
 from pathlib import Path
-import pandas as pd
 from multiprocessing import Pool, cpu_count
+from contextlib import redirect_stdout, redirect_stderr
+import pandas as pd
 
 from uhpc.class_method import (
     DirectMissingModels,
@@ -16,6 +18,27 @@ warnings.filterwarnings("ignore")
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / 'uhpc'))
+
+_log_handle = None
+_err_handle = None
+_warn_handle = None
+
+
+def _setup_logging(log_path: Path, err_path: Path, warn_path: Path):
+    """Initializer for Pool: redirect stdout/stderr and warnings inside each worker."""
+    global _log_handle, _err_handle, _warn_handle
+    _log_handle = open(log_path, "a", encoding="utf-8", buffering=1)
+    _err_handle = open(err_path, "a", encoding="utf-8", buffering=1)
+    _warn_handle = open(warn_path, "a", encoding="utf-8", buffering=1)
+
+    def _showwarning(message, category, filename, lineno, file=None, line=None):
+        _warn_handle.write(warnings.formatwarning(message, category, filename, lineno, line))
+        _warn_handle.flush()
+
+    warnings.showwarning = _showwarning
+    warnings.filterwarnings("default")
+    sys.stdout = _log_handle
+    sys.stderr = _err_handle
 
 def load_data():
     for candidate in [PROJECT_ROOT / 'uhpc' / 'UHPC.xlsx', PROJECT_ROOT / 'UHPC.xlsx']:
@@ -61,21 +84,43 @@ def main():
 
     n_proc = min(len(seeds), cpu_count())
 
-    with Pool(processes=n_proc) as pool:
+    log_dir = PROJECT_ROOT / 'logs'
+    log_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    log_file = log_dir / f'run_{timestamp}.log'
+    warn_file = log_dir / f'warn_{timestamp}.log'
+    err_file = log_dir / f'error_{timestamp}.log'
 
-        results_list = pool.map(run_for_seed, seeds)
+    with log_file.open('w', encoding='utf-8') as log_f, \
+         warn_file.open('w', encoding='utf-8') as warn_f, \
+         err_file.open('w', encoding='utf-8') as err_f:
 
-    for res in results_list:
-        for key in aggregated:
-            aggregated[key].append(res[key])
+        def _showwarning(message, category, filename, lineno, file=None, line=None):
+            warn_f.write(warnings.formatwarning(message, category, filename, lineno, line))
+            warn_f.flush()
 
-    output_dir = PROJECT_ROOT / 'results_multi_seed'
-    output_dir.mkdir(exist_ok=True)
+        warnings.showwarning = _showwarning
+        warnings.filterwarnings("default")
 
-    for key, frames in aggregated.items():
-        combined = pd.concat(frames, ignore_index=True)
-        combined.to_csv(output_dir / f'{key}_results.csv', index=False)
-        print(f"Saved {key} results to {output_dir / f'{key}_results.csv'}")
+        with redirect_stdout(log_f), redirect_stderr(err_f):
+            with Pool(
+                processes=n_proc,
+                initializer=_setup_logging,
+                initargs=(log_file, err_file, warn_file),
+            ) as pool:
+                results_list = pool.map(run_for_seed, seeds)
+
+            for res in results_list:
+                for key in aggregated:
+                    aggregated[key].append(res[key])
+
+            output_dir = PROJECT_ROOT / 'results_multi_seed'
+            output_dir.mkdir(exist_ok=True)
+
+            for key, frames in aggregated.items():
+                combined = pd.concat(frames, ignore_index=True)
+                combined.to_csv(output_dir / f'{key}_results.csv', index=False)
+                print(f"Saved {key} results to {output_dir / f'{key}_results.csv'}")
 
 if __name__ == '__main__':
     main()
