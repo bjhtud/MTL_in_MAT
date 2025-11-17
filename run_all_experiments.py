@@ -2,6 +2,7 @@ import sys
 import warnings
 from pathlib import Path
 import pandas as pd
+from multiprocessing import Pool, cpu_count
 
 from uhpc.class_method import (
     DirectMissingModels,
@@ -58,8 +59,13 @@ def main():
         'complete': []
     }
 
-    for seed in seeds:
-        res = run_for_seed(seed)
+    n_proc = min(len(seeds), cpu_count())
+
+    with Pool(processes=n_proc) as pool:
+
+        results_list = pool.map(run_for_seed, seeds)
+
+    for res in results_list:
         for key in aggregated:
             aggregated[key].append(res[key])
 

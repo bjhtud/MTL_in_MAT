@@ -113,7 +113,8 @@ class BaselineImputer:
             rfe_cv=5,
             rfe_step=1,
             random_state=self.random_state,
-            feature_selection=True
+            feature_selection=True,
+            verbose=0
         )
 
         mf.fit(xy)

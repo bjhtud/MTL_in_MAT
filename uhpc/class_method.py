@@ -29,9 +29,6 @@ IMPUTATION_METHODS = [
     ('GAIN', 'gain'),
     ('Sinkhorn', 'sinkhorn'),
     ('MICE (Iterativeimputer)', 'MICE'),
-    ('MIRACLE', 'miracle'),
-    ('ICE imputer', 'ice'),
-    ('EM imputer', 'em'),
     ('KNN插补', 'KNN'),
     ('MIDA', 'MIDA'),
     ('MIWAE', 'miwae'),
@@ -39,8 +36,6 @@ IMPUTATION_METHODS = [
     ('低秩矩阵', 'lm'),
     ('堆叠', 'stacking'),
     ('VAE', 'vae'),
-    ('Median imputation', 'median'),
-    ('Mean imputation', 'mean'),
     ('vanilla', 'vanilla'), 
     ('vae_miwae', 'vae_miwae'), 
     ('h_vae', 'h_vae'),
@@ -155,6 +150,12 @@ class BaseDataset:
         self.X_train, self.X_test = scale_features(_as_frame(X_train), _as_frame(X_test)) 
         self.y_train = _as_frame(y_train)
         self.y_test = _as_frame(y_test)
+
+        # 统一列名为字符串，避免列名类型混用导致下游模型报错
+        self.X_train.columns = self.X_train.columns.map(str)
+        self.X_test.columns = self.X_test.columns.map(str)
+        self.y_train.columns = self.y_train.columns.map(str)
+        self.y_test.columns = self.y_test.columns.map(str)
 
         # 对标签插补结果做缓存，适用于只能自动插补特征的模型
         self._label_impute_cache: dict[str, pd.DataFrame] = {}

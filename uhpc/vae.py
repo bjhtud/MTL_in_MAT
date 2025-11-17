@@ -560,7 +560,7 @@ class VAEImputer:
         mapping = {
             "vanilla": VanillaVAE,
             "vae": VanillaVAE,
-            "miwae": MIWAE,
+            "vae_miwae": MIWAE,
             "h_vae": H_VAEM,
             "hver": H_VAEM,
             "hmc_vae": HMC_VAE,
