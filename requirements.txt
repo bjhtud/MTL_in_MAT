@@ -10,8 +10,8 @@ catboost==1.2.8
 hyperimpute==0.1.17
 gpytorch==1.14.2
 
-torch==2.9.0+cu130
-torchvision==0.24.0+cu130
+torch==2.9.0
+torchvision==0.24.0
 tensorflow==2.20.0
 miracle-imputation==0.1.6
 
