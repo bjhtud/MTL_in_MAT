@@ -3,14 +3,22 @@ import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.experimental import enable_iterative_imputer   # 为了能够正常使用 InterativeImputer
-from sklearn.impute import IterativeImputer
+from sklearn.impute import IterativeImputer, KNNImputer
 from sklearn.ensemble import RandomForestRegressor
 from scipy.linalg import svd, norm, inv
-from hyperimpute.plugins.imputers import Imputers
 from sklearn.metrics import r2_score
-from RFE_missforest import *
-from KNN_RFE_missforest import *
-from MIDA import Autoencoder
+from xgboost import XGBRegressor
+
+try:
+    from hyperimpute.plugins.imputers import Imputers
+except ImportError:
+    Imputers = None
+
+from .method.MatImpute import MatImputer
+from .RFE_missforest import *
+from .KNN_RFE_missforest import *
+from .MIDA import Autoencoder
+
 
 class BaselineImputer:
     """
@@ -44,27 +52,38 @@ class BaselineImputer:
             return self._low_rank_impute(X, y)
         elif method == 'KNN':
             return self._KNN_impute(X, y)
-        elif method == 'InterativeImputer':
-            return self._interative_impute(X, y)
+        elif method == "MatImputer":
+            return self._mat_imputer(X, y)
+        elif method in ['vae', 'vanilla', 'vae_miwae', 'h_vae', 'hver', 'hmc_vae', 'hh_vaem']:
+            return self._vae(X, y, variant=method, **kwargs)
         elif method == 'gtmcc':
             X = X.fillna(0)
             S = rbf_kernel(X, gamma=0.5)
             np.fill_diagonal(S, 0)
             return self._gtmcc_impute(X, y, S)
-        elif method in ['hyperimpute', 'missforest', 'gain', 'sinkhorn', 'miwae', 'vae']:
+        elif method in ['hyperimpute', 'missforest', 'gain', 'sinkhorn', 'miwae', 'miracle', 'ice', 'em', 'median', 'mean', 'MICE', 'softimpute']:
             return self._hyperimpute_methods(X, y, method, **kwargs)
         elif method == 'RFE_mf':
             return self._RFE_mf(X, y)
         elif method == 'MIDA':
             return self._MIDA(X, y)
-        elif method == 'softimpute':
-            return self._MIDA(X, y)
-        elif method == 'MICE':
-            return self._MIDA(X, y)
         elif method == 'stacking':
             return self._stacking_impute(X, y, **kwargs)
+        elif method == 'vae':
+            return self._vae(X, y)
         else:
             raise ValueError(f'Unknown method: {method}')
+
+    def _mat_imputer(self,
+                    X: pd.DataFrame,
+                    y: pd.DataFrame):
+        Xy = pd.concat([X, y], axis=1)
+        mat_imputer = MatImputer(random_state=self.random_state)
+        imputed_Xy = mat_imputer.transform(Xy)
+        k = y.shape[1]
+        x_imputed = pd.DataFrame(imputed_Xy.iloc[:,:-k], index=X.index, columns=X.columns)
+        y_imputed = pd.DataFrame(imputed_Xy.iloc[:,-k:], index=y.index, columns=y.columns)
+        return x_imputed, y_imputed
 
     def _MIDA(self,
               x: pd.DataFrame,
@@ -87,6 +106,8 @@ class BaselineImputer:
         X.columns = X.columns.map(str)
         y.columns = y.columns.map(str)
         xy = pd.concat([X, y], axis=1)
+        if not xy.isna().any().any():
+            return X.copy(), y.copy()
         mf = RFE_MissForest(
             rfe_n_estimators=100,
             rfe_cv=5,
@@ -136,71 +157,48 @@ class BaselineImputer:
         filled[mask.values] = reconstructed[mask.values]
         return pd.DataFrame(filled, columns=df.columns, index=df.index)
 
+    def _vae(self,
+             X: pd.DataFrame,
+             y: pd.DataFrame,
+             variant: str = "vae",
+             **kwargs):
+        from uhpc.vae import VAEImputer
+
+        df = pd.concat([X, y], axis=1)
+        imputer = VAEImputer(variant=variant, **kwargs)
+        df_filled = imputer.fit_transform(df)
+        X_filled = df_filled.iloc[:, :X.shape[1]].reset_index(drop=True)
+        y_filled = df_filled.iloc[:, X.shape[1]:].reset_index(drop=True)
+        X_imputed = pd.DataFrame(
+            X_filled.values,
+            columns=X.columns,
+            index=X.index
+        )
+        y_imputed = pd.DataFrame(
+            y_filled.values,
+            columns=y.columns,
+            index=y.index
+        )
+        return X_imputed, y_imputed
+
     def _KNN_impute(self,
                     X: pd.DataFrame,
                     y: pd.DataFrame,
-                    cv_splits: int = 3,
-                    neighbors_range: range = range(1,21)
-                    ):
+                    n_neighbors: int = 5):
+        """
+        最基础的 KNNImputer：直接在拼接的 X、y 上 fit_transform，不做超参搜索。
+        """
         X.columns = X.columns.map(str)
         y.columns = y.columns.map(str)
-        from sklearn.model_selection import KFold
-        kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
-        best_nbr, best_r2 = None, -np.inf
-
-        for n_neighbors in neighbors_range:
-            fold_r2 = []
-            for train_idx, val_idx in kf.split(X):
-                X_tr = X.iloc[train_idx]
-                y_tr = y.iloc[train_idx]
-                X_val = X.iloc[val_idx]
-                y_val = y.iloc[val_idx]
-
-                imputer = KNNImputer(n_neighbors=n_neighbors)
-                imputer.fit(pd.concat([X_tr, y_tr], axis=1))
-
-                X_tr_imp, y_tr_imp = self._KNN_impute_xy(imputer, X_tr, y_tr)
-                X_val_imp, _ = self._KNN_impute_xy(imputer, X_val, y_val)
-
-                for col in y_tr.columns:
-                    mask = ~y_val[col].isna()
-                    if mask.sum() == 0:
-                        continue
-                    model = XGBRegressor(random_state=self.random_state)
-
-                    model.fit(X_tr_imp, y_tr_imp[col])
-                    y_pred = model.predict(X_val_imp)
-                    #print(y_val[col][mask].shape)
-                    fold_r2.append(r2_score(y_val[col][mask], y_pred[mask]))
-
-            if fold_r2:
-                mean_r2 = np.mean(fold_r2)
-                if mean_r2 > best_r2:
-                    best_r2, best_nbr = mean_r2, n_neighbors
-        #print(best_nbr)
-        Xy_KNN = pd.concat([X, y], axis=1)
-        imp_KNN = KNNImputer(n_neighbors=best_nbr)
-        imputed_KNN = imp_KNN.fit_transform(Xy_KNN)
-        cols = Xy_KNN.columns.tolist()
-        k = y.shape[1]
-        X_cols = cols[:-k]
-        y_cols = cols[-k:]
-        X_imputed = pd.DataFrame(imputed_KNN[:, :-k], columns=X_cols, index=X.index)
-        y_imputed = pd.DataFrame(imputed_KNN[:, -k:], columns=y_cols, index=y.index)
-
-        return X_imputed, y_imputed
-
-    def _KNN_impute_xy(self, imputer, X: pd.DataFrame, y: pd.DataFrame):
-        """
-        用同一个 imputer 对 X 和 y 合并后的数组做 transform，并拆回 X, y
-        """
         Xy = pd.concat([X, y], axis=1)
-        arr = imputer.transform(Xy)
+        imputer = KNNImputer(n_neighbors=n_neighbors)
+        arr = imputer.fit_transform(Xy)
         k = y.shape[1]
-        X_imp = pd.DataFrame(arr[:, :-k], columns=X.columns, index=X.index)
-        y_imp = pd.DataFrame(arr[:, -k:], columns=y.columns, index=y.index)
-
-        return X_imp, y_imp
+        X_cols = Xy.columns[:-k]
+        y_cols = Xy.columns[-k:]
+        X_imputed = pd.DataFrame(arr[:, :-k], columns=X_cols, index=X.index)
+        y_imputed = pd.DataFrame(arr[:, -k:], columns=y_cols, index=y.index)
+        return X_imputed, y_imputed
 
     def _stacking_impute(
         self,
@@ -216,6 +214,7 @@ class BaselineImputer:
         n_rounds = max(1, int(n_rounds))
 
         X_model = X.copy()
+        X_model.columns = X_model.columns.astype(str)
         for col in X_model.columns:
             series = X_model[col]
             mean_val = series.mean()
@@ -224,9 +223,11 @@ class BaselineImputer:
             X_model[col] = series.fillna(mean_val)
 
         y_filled = y.copy()
+        y_filled.columns = y_filled.columns.astype(str)
+        y_filled.columns = y_filled.columns.astype(str)
         y_filled = y_filled.fillna(y_filled.mean())
         original_missing = y.isna()
-        order = list(y.columns)
+        order = list(y_filled.columns)
 
         def _build_model():
             if base_model_factory is not None:
@@ -370,24 +371,35 @@ class BaselineImputer:
         return p
 
     def _hyperimpute_methods(self,X, y, method, **kwargs):
-
         df = pd.concat([X, y], axis=1)
-        if method == 'hyperimpute':
-            plugin = Imputers().get('hyperimpute', **kwargs)
-        elif method == 'missforest':
-            plugin = Imputers().get('missforest', **kwargs)
-        elif method == 'gain':
-            plugin = Imputers().get('gain', **kwargs)
-        elif method == 'sinkhorn':
-            plugin = Imputers().get('sinkhorn', **kwargs)
-        elif method == 'miwae':
-            plugin = Imputers().get('miwae', **kwargs)
-        elif method == 'vae':
+
+        if method == 'vae':
             from uhpc.vae import VAEImputer
             plugin = VAEImputer(**kwargs)
         else:
-            raise ValueError(f'Unknown method: {method}')
+            if Imputers is None:
+                raise ImportError(f"hyperimpute is required for method '{method}' but is not installed.")
+            plugin_name = {
+                'hyperimpute': 'hyperimpute',
+                'missforest': 'missforest',
+                'gain': 'gain',
+                'sinkhorn': 'sinkhorn',
+                'miwae': 'miwae',
+                'miracle': 'miracle',
+                'MICE': 'mice',
+                'ice': 'ice',
+                'em': 'EM',
+                'softimpute': 'softimpute',
+                'median': 'median',
+                'mean': 'mean',
+            }.get(method)
+            
+            if plugin_name is None:
+                raise ValueError(f'Unknown method: {method}')
+            plugin = Imputers().get(plugin_name, **kwargs)
+
         df_filled = plugin.fit_transform(df)
+
         X_filled = df_filled.iloc[:, :X.shape[1]].reset_index(drop=True)
         y_filled = df_filled.iloc[:, X.shape[1]:].reset_index(drop=True)
         X_imputed = pd.DataFrame(

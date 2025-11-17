@@ -112,7 +112,7 @@ class RFE_MissForest:
                  rfe_cv: int = 5,
                  rfe_step: int = 1,
                  random_state: int = 42,
-                 verbose: int = 2) -> None:
+                 verbose: int = 0) -> None:
         """
         Parameters
         ----------

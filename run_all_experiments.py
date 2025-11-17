@@ -50,9 +50,8 @@ def run_for_seed(seed):
     }
     return results
 
-
 def main():
-    seeds = [0, 1, 2, 3, 4]
+    seeds = [10, 20, 30, 40, 50]
     aggregated = {
         'direct': [],
         'feature': [],
@@ -71,7 +70,6 @@ def main():
         combined = pd.concat(frames, ignore_index=True)
         combined.to_csv(output_dir / f'{key}_results.csv', index=False)
         print(f"Saved {key} results to {output_dir / f'{key}_results.csv'}")
-
 
 if __name__ == '__main__':
     main()
