@@ -2,7 +2,6 @@ import sys
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 BASE_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BASE_DIR / "results_multi_seed"
@@ -10,104 +9,105 @@ OUTPUT_DIR = BASE_DIR / "analysis_plots"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 CSV_FILES = {
-    'direct': RESULTS_DIR / 'direct_results.csv',
-    'feature': RESULTS_DIR / 'feature_results.csv',
-    'complete': RESULTS_DIR / 'complete_results.csv',
+    "direct": RESULTS_DIR / "direct_results.csv",
+    "feature": RESULTS_DIR / "feature_results.csv",
+    "complete": RESULTS_DIR / "complete_results.csv",
 }
 
-SUMMARY_PATH = OUTPUT_DIR / 'summary_stats.csv'
-TOP10_OVERALL_PATH = OUTPUT_DIR / 'top10_overall.csv'
-TOP10_GROUP_PATH = OUTPUT_DIR / 'top10_{group}.csv'
+RANK_SUFFIX = {
+    "r2": "r2",
+    "mse": "mse",
+    "rmse": "rmse",
+    "mae": "mae",
+}
+
+METRIC_ORDER = {
+    "r2": False,   # descending
+    "mse": True,   # ascending
+    "rmse": True,  # ascending
+    "mae": True,   # ascending
+}
+
 
 def load_results():
     data = {}
     for key, path in CSV_FILES.items():
         if not path.exists():
             raise FileNotFoundError(f"Missing CSV file: {path}")
-        df = pd.read_csv(path)
-        data[key] = df
+        data[key] = pd.read_csv(path)
     return data
 
 
-def summarize_results(data):
-    records = []
+def aggregate_over_seeds(data: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Average metrics across seeds for each model (collapse different seeds within the same group)."""
+    aggregated = {}
     for group, df in data.items():
-        grouped = df.groupby('model')[['r2', 'mse', 'mae']].agg(['mean', 'std']).reset_index()
-        grouped.columns = ['model', 'r2_mean', 'r2_std', 'mse_mean', 'mse_std', 'mae_mean', 'mae_std']
-        grouped['group'] = group
-        records.append(grouped)
-    summary = pd.concat(records, ignore_index=True)
-    summary.to_csv(SUMMARY_PATH, index=False)
-    print(f"Saved summary statistics to {SUMMARY_PATH}")
-    return summary
+        metrics_cols = [c for c in ["r2", "mse", "rmse", "mae"] if c in df.columns]
+        if not metrics_cols:
+            continue
+        grouped = df.groupby("model", as_index=False)[metrics_cols].mean()
+        if "seed" in df.columns:
+            grouped["seed_count"] = df.groupby("model")["seed"].nunique().values
+        aggregated[group] = grouped
+    return aggregated
 
 
-def select_top_models(summary, top_k=10):
-    ranking_cols = ['r2_mean', 'mse_mean', 'mae_mean']
-    summary_sorted = summary.sort_values(
-        by=['r2_mean', 'mse_mean', 'mae_mean'],
-        ascending=[False, True, True]
-    )
+def rank_and_save_per_group(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, pd.DataFrame]]:
+    ranked: dict[str, dict[str, pd.DataFrame]] = {}
+    for group, df in data.items():
+        ranked[group] = {}
+        for metric, suffix in RANK_SUFFIX.items():
+            asc = METRIC_ORDER[metric]
+            sorted_df = df.sort_values(by=metric, ascending=asc).reset_index(drop=True)
+            out_path = OUTPUT_DIR / f"{group}_{suffix}.csv"
+            sorted_df.to_csv(out_path, index=False)
+            ranked[group][metric] = sorted_df
+            print(f"Saved ranking by {metric} for {group} -> {out_path}")
+    return ranked
 
-    top_overall = summary_sorted.head(top_k)
-    top_overall.to_csv(TOP10_OVERALL_PATH, index=False)
-    print(f"Saved overall Top {top_k} combinations to {TOP10_OVERALL_PATH}")
 
-    for group, group_df in summary_sorted.groupby('group'):
-        top_group = group_df.head(top_k)
-        out_path = OUTPUT_DIR / f"top10_{group}.csv"
-        top_group.to_csv(out_path, index=False)
-        print(f"Saved Top {top_k} combinations for '{group}' to {out_path}")
-
-def plot_metric_summary(summary):
-    melted = summary.melt(
-        id_vars=['group', 'model'],
-        value_vars=['r2_mean', 'mse_mean', 'mae_mean'],
-        var_name='metric',
-        value_name='value'
-    )
-    g = sns.catplot(
-        data=melted,
-        x='model',
-        y='value',
-        hue='group',
-        col='metric',
-        kind='bar',
-        height=4,
-        aspect=1.5,
-        col_wrap=1,
-    )
-    g.set_xticklabels(rotation=90)
-    g.tight_layout()
-    plot_path = OUTPUT_DIR / 'metrics_barplot.png'
-    plt.savefig(plot_path, dpi=300)
-    plt.close()
-    print(f"Saved metrics bar plot to {plot_path}")
-
-def plot_boxplots(data):
-    for metric in ['r2', 'mse', 'mae']:
-        combined = []
-        for group, df in data.items():
-            tmp = df[['model', metric]].copy()
-            tmp['group'] = group
-            combined.append(tmp)
-        combined_df = pd.concat(combined, ignore_index=True)
-        plt.figure(figsize=(12, 6))
-        sns.boxplot(data=combined_df, x='model', y=metric, hue='group')
-        plt.xticks(rotation=90)
+def plot_top10_per_group(ranked: dict[str, dict[str, pd.DataFrame]]):
+    for group, metrics in ranked.items():
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        axes = axes.flatten()
+        for ax, metric in zip(axes, ["r2", "mse", "rmse", "mae"]):
+            top10 = metrics.get(metric)
+            if top10 is None or top10.empty:
+                continue
+            subset = top10.head(10)
+            ax.barh(subset["model"], subset[metric], color="steelblue")
+            ax.set_title(f"{group} - Top 10 by {metric}")
+            ax.invert_yaxis()
+            ax.grid(True, axis="x", linestyle="--", alpha=0.5)
+            ax.set_xlabel(metric)
         plt.tight_layout()
-        plot_path = OUTPUT_DIR / f'{metric}_boxplot.png'
+        plot_path = OUTPUT_DIR / f"top10_{group}.png"
         plt.savefig(plot_path, dpi=300)
         plt.close()
-        print(f"Saved {metric} boxplot to {plot_path}")
+        print(f"Saved top10 plots for {group} to {plot_path}")
+
+def save_best_per_group_metric(ranked: dict[str, dict[str, pd.DataFrame]]):
+    records = []
+    for group, metrics in ranked.items():
+        for metric, df in metrics.items():
+            best = df.iloc[0].copy()
+            best["group"] = group
+            best["metric"] = metric
+            records.append(best)
+    if records:
+        out_df = pd.DataFrame(records)
+        out_path = OUTPUT_DIR / "best_per_group_metric.csv"
+        out_df.to_csv(out_path, index=False)
+        print(f"Saved best-per-group-per-metric summary to {out_path}")
+
 
 def main():
-    data = load_results()
-    summary = summarize_results(data)
-    select_top_models(summary, top_k=10)
-    plot_metric_summary(summary)
-    plot_boxplots(data)
+    raw = load_results()
+    data = aggregate_over_seeds(raw)
+    ranked = rank_and_save_per_group(data)
+    plot_top10_per_group(ranked)
+    save_best_per_group_metric(ranked)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
