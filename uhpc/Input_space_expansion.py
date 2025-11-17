@@ -5,7 +5,6 @@ import copy
 import random
 import numpy as np
 from sklearn.base import clone
-from Input_space_expansion.Base._base import BaseEstimator
 from sklearn.model_selection import KFold
 import sys
 from abc import abstractmethod
