@@ -19,7 +19,6 @@ SUMMARY_PATH = OUTPUT_DIR / 'summary_stats.csv'
 TOP10_OVERALL_PATH = OUTPUT_DIR / 'top10_overall.csv'
 TOP10_GROUP_PATH = OUTPUT_DIR / 'top10_{group}.csv'
 
-
 def load_results():
     data = {}
     for key, path in CSV_FILES.items():

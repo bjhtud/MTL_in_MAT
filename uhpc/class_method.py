@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+from pathlib import Path
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
@@ -43,7 +44,19 @@ IMPUTATION_METHODS = [
     ('hmc_vae', 'hmc_vae'),
     ('hh_vaem', 'hh_vaem'),
     ('gtmcc', 'gtmcc')
-]
+    ]
+
+def _slug(text: str) -> str:
+    allowed = []
+    for ch in str(text):
+        if ch.isalnum():
+            allowed.append(ch.lower())
+        else:
+            allowed.append("_")
+    slug = "".join(allowed)
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug.strip("_")
 
 def _as_frame(data) -> pd.DataFrame:
     if isinstance(data, pd.DataFrame):
@@ -157,10 +170,40 @@ class BaseDataset:
         self.y_train.columns = self.y_train.columns.map(str)
         self.y_test.columns = self.y_test.columns.map(str)
 
+        # 磁盘缓存目录（用于容错与重复使用）
+        root = Path(__file__).resolve().parent.parent
+        self._cache_root = root / "run_results"
+        self._impute_cache_dir = self._cache_root / "impute"
+        self._regress_cache_dir = self._cache_root / "regress"
+        self._impute_cache_dir.mkdir(parents=True, exist_ok=True)
+        self._regress_cache_dir.mkdir(parents=True, exist_ok=True)
+
         # 对标签插补结果做缓存，适用于只能自动插补特征的模型
         self._label_impute_cache: dict[str, pd.DataFrame] = {}
         # 对完整插补结果做缓存，适用于需要同时插补特征和标签的模型
         self._full_impute_cache: dict[str, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = {}
+
+    def _impute_cache_path(self, kind: str, method: str) -> Path:
+        return self._impute_cache_dir / f"{kind}_seed{self.seed}_{_slug(method)}.pkl"
+
+    def _save_impute_cache(self, path: Path, obj) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.to_pickle(obj, path)
+
+    def _load_impute_cache(self, path: Path):
+        return pd.read_pickle(path)
+
+    def _regress_cache_path(self, dataset_tag: str, imputer_label: str, model_name: str) -> Path:
+        fname = f"{dataset_tag}_seed{self.seed}_{_slug(imputer_label)}_{_slug(model_name)}.csv"
+        return self._regress_cache_dir / fname
+
+    def _save_prediction_cache(self, path: Path, df: pd.DataFrame) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path)
+
+    def _load_prediction_cache(self, path: Path, template: pd.DataFrame) -> pd.DataFrame:
+        df = pd.read_csv(path, index_col=0)
+        return _match_template(df, template)
 
     def _score_predictions(self, predictions: dict[str, pd.DataFrame]) -> pd.DataFrame:
         records = []
@@ -172,8 +215,13 @@ class BaseDataset:
         return pd.DataFrame(records)
 
     def _impute_labels(self, method: str) -> pd.DataFrame:
+        cache_path = self._impute_cache_path("labels", method)
+        if cache_path.exists():
+            return self._load_impute_cache(cache_path)
+
         _, y_imp = BaselineImputer(random_state=self.seed).impute(self.X_train, self.y_train, method=method)
         y_imp = _match_template(y_imp, self.y_train)
+        self._save_impute_cache(cache_path, y_imp)
         return y_imp
 
     def _get_imputed_labels(self, method: str) -> pd.DataFrame:
@@ -182,11 +230,18 @@ class BaseDataset:
         return self._label_impute_cache[method]
 
     def _impute_all(self, method: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        cache_path = self._impute_cache_path("full", method)
+        if cache_path.exists():
+            cached = self._load_impute_cache(cache_path)
+            return cached["X_train"], cached["y_train"], cached["X_test"]
+
         x_imp_train, y_imp_train = BaselineImputer(random_state=self.seed).impute(self.X_train, self.y_train, method=method)
-        x_imp_test = self.X_test.copy()
+        x_imp_test, _ = BaselineImputer(random_state=self.seed).impute(self.X_test, self.y_test, method=method)
         X_train_filled = _match_template(x_imp_train, self.X_train)
         y_train_filled = _match_template(y_imp_train, self.y_train)
         X_test_filled = _match_template(x_imp_test, self.X_test)
+        payload = {"X_train": X_train_filled, "y_train": y_train_filled, "X_test": X_test_filled}
+        self._save_impute_cache(cache_path, payload)
         return X_train_filled, y_train_filled, X_test_filled
 
     def _get_full_imputed_data(self, method: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -222,8 +277,14 @@ class DirectMissingModels(BaseDataset):
         names = _select_model_names(model_names, self.MODEL_REGISTRY)
         predictions = {}
         for name in names:
-            print(f"[seed {self.seed}] model={name}")
-            predictions[name] = self.MODEL_REGISTRY[name](self)
+            cache_path = self._regress_cache_path("direct", "none", name)
+            if cache_path.exists():
+                pred = self._load_prediction_cache(cache_path, self.y_test)
+            else:
+                print(f"[seed {self.seed}] model={name}")
+                pred = self.MODEL_REGISTRY[name](self)
+                self._save_prediction_cache(cache_path, pred)
+            predictions[name] = pred
         return self._score_predictions(predictions)
 
 
@@ -290,19 +351,33 @@ class FeatureMissingModels(BaseDataset):
             except Exception as exc:
                 print(f'[WARN] 插补 `{display_name}` 失败：{exc}')
                 continue
+            if y_filled.isna().any().any():
+                print(f'[WARN] 插补 `{display_name}` 仍有缺失，跳过预测')
+                continue
 
             for name in names:
-                print(f"[seed {self.seed}] imputer={display_name} ({method_key}) model={name}")
-                pred = registry[name](y_filled)
+                cache_path = self._regress_cache_path("feature", method_key, name)
+                if cache_path.exists():
+                    pred = self._load_prediction_cache(cache_path, self.y_test)
+                else:
+                    print(f"[seed {self.seed}] imputer={display_name} ({method_key}) model={name}")
+                    pred = registry[name](y_filled)
+                    self._save_prediction_cache(cache_path, pred)
                 combo = self._format_combo_name(name, display_name)
                 predictions[combo] = pred
 
             if include_iterative:
                 iterative_preds = self._iterative_predictions(y_filled)
                 for iter_name, pred in iterative_preds.items():
-                    print(f"[seed {self.seed}] imputer={display_name} ({method_key}) model={iter_name}")
+                    cache_path = self._regress_cache_path("feature", method_key, iter_name)
+                    if cache_path.exists():
+                        pred_cached = self._load_prediction_cache(cache_path, self.y_test)
+                    else:
+                        print(f"[seed {self.seed}] imputer={display_name} ({method_key}) model={iter_name}")
+                        pred_cached = pred
+                        self._save_prediction_cache(cache_path, pred_cached)
                     combo = self._format_combo_name(iter_name, display_name)
-                    predictions[combo] = pred
+                    predictions[combo] = pred_cached
 
         return self._score_predictions(predictions)
 
@@ -381,13 +456,24 @@ class CompleteDataModels(BaseDataset):
                 continue
             try:
                 X_train_filled, y_train_filled, X_test_filled = self._get_full_imputed_data(method_key)
+                if (X_train_filled.isna().any().any()
+                    or y_train_filled.isna().any().any()
+                    or X_test_filled.isna().any().any()):
+
+                    print(f"[WARN] imputer `{display_name}` produced NaN, skip models")
+                    continue
             except Exception as exc:
                 print(f'[WARN] 插补 `{display_name}` 失败：{exc}')
                 continue
-
+            
             for name in names:
-                print(f"[seed {self.seed}] imputer={display_name} ({method_key}) model={name}")
-                pred = registry[name](X_train_filled, y_train_filled, X_test_filled)
+                cache_path = self._regress_cache_path("complete", method_key, name)
+                if cache_path.exists():
+                    pred = self._load_prediction_cache(cache_path, self.y_test)
+                else:
+                    print(f"[seed {self.seed}] imputer={display_name} ({method_key}) model={name}")
+                    pred = registry[name](X_train_filled, y_train_filled, X_test_filled)
+                    self._save_prediction_cache(cache_path, pred)
                 combo = self._format_combo_name(name, display_name)
                 predictions[combo] = pred
 
