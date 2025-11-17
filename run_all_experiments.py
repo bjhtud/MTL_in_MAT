@@ -75,7 +75,7 @@ def run_for_seed(seed):
     return results
 
 def main():
-    seeds = [10, 20, 30, 40, 50]
+    seeds = [40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
     aggregated = {
         'direct': [],
         'feature': [],
