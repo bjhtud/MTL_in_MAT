@@ -12,7 +12,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
 
 from uhpc.Input_space_expansion import erc, sst
-from uhpc.Class import BaselineImputer
+from uhpc.Class import BaselineImputer, Subset
 from uhpc.method.CatBoost import catboost_fit_predict
 from uhpc.method.GBDT import gbdt_fit_predict
 from uhpc.method.HistGradientBoostingRegressor import hgbr_fit_predict
@@ -23,8 +23,8 @@ from uhpc.method.MultitaskGP import model_fit_predict as multitask_gp_predict
 from uhpc.method.XGBoost import xgboost_fit_predict
 
 IMPUTATION_METHODS = [
-    ('MissForest', 'missforest'),
-    ('RFE-MissForest', 'RFE_mf'),
+    #('MissForest', 'missforest'),
+    #('RFE-MissForest', 'RFE_mf'),
     ('Hyperimpute', 'hyperimpute'),
     ('KNN based method (MatImputer)', 'MatImputer'),
     ('GAIN', 'gain'),
@@ -43,7 +43,7 @@ IMPUTATION_METHODS = [
     ('hver', 'hver'),
     ('hmc_vae', 'hmc_vae'),
     ('hh_vaem', 'hh_vaem'),
-    ('gtmcc', 'gtmcc')
+    ('gtmcc', 'gtmcc'),
     ]
 
 def _slug(text: str) -> str:
@@ -96,12 +96,26 @@ def _valid_metrics(y_true: pd.DataFrame, y_pred: pd.DataFrame) -> dict:
     y_true_valid = y_true.loc[mask]
     y_pred_valid = y_pred.loc[mask]
     return {
-        'r2': r2_score(y_true_valid, y_pred_valid, multioutput='uniform_average'),
-        'mse': mean_squared_error(y_true_valid, y_pred_valid),
-        'rmse': np.sqrt(mean_squared_error(y_true_valid, y_pred_valid)),
-        'mae': mean_absolute_error(y_true_valid, y_pred_valid),
+        'r2': r2_score(y_true_valid, y_pred_valid, multioutput='uniform_average'), #'raw_values'
+        'mse': mean_squared_error(y_true_valid, y_pred_valid, multioutput='uniform_average'),
+        'rmse': np.sqrt(mean_squared_error(y_true_valid, y_pred_valid, multioutput='uniform_average')),
+        'mae': mean_absolute_error(y_true_valid, y_pred_valid, multioutput='uniform_average'),
     }
 
+def _valid_metrics_label(y_true: pd.DataFrame, y_pred: pd.DataFrame) -> dict:
+    y_true = _as_frame(y_true)
+    y_pred = _match_template(y_pred, y_true)
+    mask = ~y_true.isna().any(axis=1)
+    if not mask.any():
+        raise ValueError('目标值全为 NaN，无法计算指标。')
+    y_true_valid = y_true.loc[mask]
+    y_pred_valid = y_pred.loc[mask]
+    return {
+        'r2': r2_score(y_true_valid, y_pred_valid, multioutput='raw_values'), #'raw_values'
+        'mse': mean_squared_error(y_true_valid, y_pred_valid, multioutput='raw_values'),
+        'rmse': np.sqrt(mean_squared_error(y_true_valid, y_pred_valid, multioutput='raw_values')),
+        'mae': mean_absolute_error(y_true_valid, y_pred_valid, multioutput='raw_values'),
+    }
 
 def _scale_with_missing(X_train: pd.DataFrame, X_test: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     train_scaled = X_train.copy()
@@ -125,7 +139,6 @@ def _scale_with_missing(X_train: pd.DataFrame, X_test: pd.DataFrame) -> tuple[pd
         test_scaled[col] = (X_test[col] - mean) / std
 
     return train_scaled, test_scaled
-
 
 def scale_features(X_train: pd.DataFrame, X_test: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     scaler = StandardScaler()
@@ -169,6 +182,7 @@ class BaseDataset:
         self.X_test.columns = self.X_test.columns.map(str)
         self.y_train.columns = self.y_train.columns.map(str)
         self.y_test.columns = self.y_test.columns.map(str)
+        self.last_label_metrics: pd.DataFrame = pd.DataFrame()
 
         # 磁盘缓存目录（用于容错与重复使用）
         root = Path(__file__).resolve().parent.parent
@@ -207,12 +221,44 @@ class BaseDataset:
 
     def _score_predictions(self, predictions: dict[str, pd.DataFrame]) -> pd.DataFrame:
         records = []
+        label_records = []
         for name, pred in predictions.items():
             df_pred = _match_template(pred, self.y_test)
             metrics = _valid_metrics(self.y_test, df_pred)
             metrics['model'] = name
             records.append(metrics)
+            try:
+                label_metrics = _valid_metrics_label(self.y_test, df_pred)
+                for idx, col in enumerate(self.y_test.columns):
+                    label_records.append({
+                        'model': name,
+                        'label': col,
+                        'r2': label_metrics['r2'][idx],
+                        'mse': label_metrics['mse'][idx],
+                        'rmse': label_metrics['rmse'][idx],
+                        'mae': label_metrics['mae'][idx],
+                    })
+            except Exception as exc:
+                print(f'[WARN] per-label metrics failed for {name}: {exc}')
+
+        self.last_label_metrics = pd.DataFrame(label_records)
         return pd.DataFrame(records)
+
+    def _score_predictions_label(self, predictions: dict[str, pd.DataFrame]) -> pd.DataFrame:
+        label_records = []
+        for name, pred in predictions.items():
+            df_pred = _match_template(pred, self.y_test)
+            metrics = _valid_metrics_label(self.y_test, df_pred)
+            for idx, col in enumerate(self.y_test.columns):
+                label_records.append({
+                    'model': name,
+                    'label': col,
+                    'r2': metrics['r2'][idx],
+                    'mse': metrics['mse'][idx],
+                    'rmse': metrics['rmse'][idx],
+                    'mae': metrics['mae'][idx],
+                })
+        return pd.DataFrame(label_records)
 
     def _impute_labels(self, method: str) -> pd.DataFrame:
         cache_path = self._impute_cache_path("labels", method)
@@ -266,17 +312,69 @@ class BaseDataset:
         return f'{_slug(model_name)}__{_slug(imputer_label)}'
 
 class DirectMissingModels(BaseDataset):
-    '''
-    类别一：模型能够同时处理特征和标签的缺失，直接输入原始 DataFrame。
-    '''
+    """
+    Models that can handle missing features and labels directly without imputation.
+    """
     MODEL_REGISTRY = {
         'catboost': lambda obj: catboost_fit_predict(obj.X_train, obj.y_train, obj.X_test),
         'mt_extra_trees': lambda obj: mtet_fit_predict(obj.X_train, obj.y_train, obj.X_test, obj.y_test),
     }
+
+    def _run_subset(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        runner = Subset(
+            model=RandomForestRegressor,
+            X_train=self.X_train,
+            y_train=self.y_train,
+            X_test=self.X_test,
+            y_test=self.y_test,
+            f_num=self.X_train.shape[1],
+            random_state=self.seed,
+        )
+        label_results, overall_results = runner._get_output()
+
+        records = []
+        label_records = []
+        for item in label_results:
+            label_name = item.get('label', '')
+            label_records.append({
+                'model': self._format_combo_name('subset', label_name if label_name else 'label'),
+                'label': label_name,
+                'r2': item['r2'],
+                'mse': item['mse'],
+                'rmse': item['rmse'],
+                'mae': item['mae'],
+            })
+        for item in overall_results:
+            records.append({
+                'model': self._format_combo_name('subset', 'overall'),
+                'r2': item['r2'],
+                'mse': item['mse'],
+                'rmse': item['rmse'],
+                'mae': item['mae'],
+            })
+
+        return pd.DataFrame(records), pd.DataFrame(label_records)
+
     def run(self, model_names: list[str] | None = None) -> pd.DataFrame:
-        names = _select_model_names(model_names, self.MODEL_REGISTRY)
+        self.last_label_metrics = pd.DataFrame()
+        registry = dict(self.MODEL_REGISTRY)
+        registry['subset'] = None
+        names = _select_model_names(model_names, registry)
         predictions = {}
+        extra_metrics: list[pd.DataFrame] = []
+        label_frames: list[pd.DataFrame] = []
         for name in names:
+            if name == 'subset':
+                try:
+                    subset_metrics, subset_label_metrics = self._run_subset()
+                except Exception as exc:
+                    print(f'[WARN] subset failed: {exc}')
+                    continue
+                if not subset_metrics.empty:
+                    extra_metrics.append(subset_metrics)
+                if not subset_label_metrics.empty:
+                    label_frames.append(subset_label_metrics)
+                continue
             cache_path = self._regress_cache_path("direct", "none", name)
             if cache_path.exists():
                 pred = self._load_prediction_cache(cache_path, self.y_test)
@@ -285,8 +383,24 @@ class DirectMissingModels(BaseDataset):
                 pred = self.MODEL_REGISTRY[name](self)
                 self._save_prediction_cache(cache_path, pred)
             predictions[name] = pred
-        return self._score_predictions(predictions)
 
+        frames = []
+        if predictions:
+            frames.append(self._score_predictions(predictions))
+            if not self.last_label_metrics.empty:
+                label_frames.append(self.last_label_metrics)
+        else:
+            self.last_label_metrics = pd.DataFrame()
+        frames.extend(extra_metrics)
+        if label_frames:
+            self.last_label_metrics = pd.concat(label_frames, ignore_index=True)
+        else:
+            self.last_label_metrics = pd.DataFrame()
+        if frames:
+            return pd.concat(frames, ignore_index=True)
+        
+        return pd.DataFrame(columns=['r2', 'mse', 'rmse', 'mae', 'model'])
+    
 
 class FeatureMissingModels(BaseDataset):
     '''
@@ -330,6 +444,7 @@ class FeatureMissingModels(BaseDataset):
         include_iterative: bool = True,
         impute_methods: list[tuple[str, str | None]] | None = None,
     ) -> pd.DataFrame:
+        self.last_label_metrics = pd.DataFrame()
         registry = {
             'lightgbm': lambda y_filled: ligbm_fit_predict(self.X_train, y_filled, self.X_test, self.y_test),
             'hist_gbr': lambda y_filled: hgbr_fit_predict(self.X_train, y_filled, self.X_test),
@@ -343,16 +458,16 @@ class FeatureMissingModels(BaseDataset):
 
         for display_name, method_key in method_seq:
             if method_key is None:
-                print(f'[WARN] 插补方法 `{display_name}` 暂未实现，跳过。')
+                print(f'[WARN] imputer `{display_name}` not implemented, skip')
                 continue
 
             try:
                 y_filled = self._get_imputed_labels(method_key)
             except Exception as exc:
-                print(f'[WARN] 插补 `{display_name}` 失败：{exc}')
+                print(f'[WARN] imputer `{display_name}` failed: {exc}')
                 continue
             if y_filled.isna().any().any():
-                print(f'[WARN] 插补 `{display_name}` 仍有缺失，跳过预测')
+                print(f'[WARN] imputer `{display_name}` left NaNs, skip prediction')
                 continue
 
             for name in names:
@@ -379,12 +494,14 @@ class FeatureMissingModels(BaseDataset):
                     combo = self._format_combo_name(iter_name, display_name)
                     predictions[combo] = pred_cached
 
-        return self._score_predictions(predictions)
-
+        if predictions:
+            return self._score_predictions(predictions)
+        self.last_label_metrics = pd.DataFrame()
+        return pd.DataFrame(columns=['r2', 'mse', 'rmse', 'mae', 'model'])
 
 class CompleteDataModels(BaseDataset):
     '''
-    类别三：模型要求特征和标签均完整，需要先同时对 X、y 做插补。
+    Models that require complete features and labels; impute X and y first.
     '''
 
     def __init__(self, *args, impute_methods: list[tuple[str, str | None]] | None = None, **kwargs):
@@ -412,6 +529,7 @@ class CompleteDataModels(BaseDataset):
         include_multitask_gp: bool = True,
         impute_methods: list[tuple[str, str | None]] | None = None,
     ) -> pd.DataFrame:
+        self.last_label_metrics = pd.DataFrame()
         registry = {
             'random_forest': lambda Xtr, ytr, Xte: pd.DataFrame(
                 RandomForestRegressor(
@@ -451,8 +569,11 @@ class CompleteDataModels(BaseDataset):
         method_seq = impute_methods or self.impute_methods
 
         for display_name, method_key in method_seq:
+            if method_key == 'subset':
+                print(f'[WARN] imputer `{display_name}` not supported for CompleteDataModels, skip')
+                continue
             if method_key is None:
-                print(f'[WARN] 插补方法 `{display_name}` 暂未实现，跳过。')
+                print(f'[WARN] imputer `{display_name}` not implemented, skip')
                 continue
             try:
                 X_train_filled, y_train_filled, X_test_filled = self._get_full_imputed_data(method_key)
@@ -463,9 +584,9 @@ class CompleteDataModels(BaseDataset):
                     print(f"[WARN] imputer `{display_name}` produced NaN, skip models")
                     continue
             except Exception as exc:
-                print(f'[WARN] 插补 `{display_name}` 失败：{exc}')
+                print(f'[WARN] imputer `{display_name}` failed: {exc}')
                 continue
-            
+
             for name in names:
                 cache_path = self._regress_cache_path("complete", method_key, name)
                 if cache_path.exists():
@@ -477,4 +598,7 @@ class CompleteDataModels(BaseDataset):
                 combo = self._format_combo_name(name, display_name)
                 predictions[combo] = pred
 
-        return self._score_predictions(predictions)
+        if predictions:
+            return self._score_predictions(predictions)
+        self.last_label_metrics = pd.DataFrame()
+        return pd.DataFrame(columns=['r2', 'mse', 'rmse', 'mae', 'model'])

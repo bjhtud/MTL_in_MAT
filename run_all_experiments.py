@@ -11,6 +11,7 @@ from uhpc.class_method import (
     FeatureMissingModels,
     CompleteDataModels,
     scale_features,
+    _slug,
 )
 
 warnings.filterwarnings("ignore")
@@ -70,16 +71,24 @@ def run_for_seed(seed):
     results = {
         'direct': direct.run().assign(seed=seed),
         'feature': feature.run().assign(seed=seed),
-        'complete': complete.run().assign(seed=seed)
+        'complete': complete.run().assign(seed=seed),
+        'direct_label': direct.last_label_metrics.assign(seed=seed) if not direct.last_label_metrics.empty else pd.DataFrame(),
+        'feature_label': feature.last_label_metrics.assign(seed=seed) if not feature.last_label_metrics.empty else pd.DataFrame(),
+        'complete_label': complete.last_label_metrics.assign(seed=seed) if not complete.last_label_metrics.empty else pd.DataFrame(),
     }
     return results
 
 def main():
-    seeds = [40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+    seeds = [40]
     aggregated = {
         'direct': [],
         'feature': [],
         'complete': []
+    }
+    aggregated_label = {
+        'direct_label': [],
+        'feature_label': [],
+        'complete_label': [],
     }
 
     n_proc = min(len(seeds), cpu_count())
@@ -113,6 +122,9 @@ def main():
             for res in results_list:
                 for key in aggregated:
                     aggregated[key].append(res[key])
+                for key in aggregated_label:
+                    if not res[key].empty:
+                        aggregated_label[key].append(res[key])
 
             output_dir = PROJECT_ROOT / 'results_multi_seed'
             output_dir.mkdir(exist_ok=True)
@@ -121,6 +133,20 @@ def main():
                 combined = pd.concat(frames, ignore_index=True)
                 combined.to_csv(output_dir / f'{key}_results.csv', index=False)
                 print(f"Saved {key} results to {output_dir / f'{key}_results.csv'}")
+
+            # 保存按标签拆分的结果：文件名 = 原规则 + _{label}
+            for key, frames in aggregated_label.items():
+                if not frames:
+                    continue
+                combined_label = pd.concat(frames, ignore_index=True)
+                if combined_label.empty or 'label' not in combined_label:
+                    continue
+                base = key.replace('_label', '')
+                for label_name, df_label in combined_label.groupby('label'):
+                    safe_label = _slug(label_name)
+                    out_path = output_dir / f'{base}_results_{safe_label}.csv'
+                    df_label.to_csv(out_path, index=False)
+                    print(f"Saved {base} label `{label_name}` results to {out_path}")
 
 if __name__ == '__main__':
     main()

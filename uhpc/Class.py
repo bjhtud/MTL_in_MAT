@@ -70,8 +70,6 @@ class BaselineImputer:
             return self._MIDA(X, y)
         elif method == 'stacking':
             return self._stacking_impute(X, y, **kwargs)
-        elif method == 'vae':
-            return self._vae(X, y)
         else:
             raise ValueError(f'Unknown method: {method}')
 
@@ -257,20 +255,6 @@ class BaselineImputer:
 
         return X.copy(), y_filled
 
-    def _interative_impute(self, X: pd.DataFrame, y: pd.DataFrame):
-        X.columns = X.columns.map(str)
-        y.columns = y.columns.map(str)
-        Xy_Interative = pd.concat([X, y], axis=1)
-        imp_Interative = IterativeImputer(max_iter=100, random_state=self.random_state)
-        imputed_Interative = imp_Interative.fit_transform(Xy_Interative)
-        cols = Xy_Interative.columns.tolist()
-        k = y.shape[1]
-        X_cols = cols[:-k]
-        y_cols = cols[-k:]
-        X_imputed = pd.DataFrame(imputed_Interative[:, :-k], columns=X_cols, index=X.index)
-        y_imputed = pd.DataFrame(imputed_Interative[:, -k:], columns=y_cols, index=y.index)
-        return X_imputed, y_imputed
-
     def _gtmcc_impute(self,
                       X: pd.DataFrame,
                       y: pd.DataFrame,
@@ -416,15 +400,14 @@ class BaselineImputer:
         )
         return X_imputed, y_imputed
 
-
-
 from itertools import combinations
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
 class Subset:
     """
     通过划分子集来弥补数据中的缺失状况
     """
-    def __init__(self, model, X_train, y_train, X_test, y_test,f_num, random_state=42):
+    def __init__(self, model, X_train, y_train, X_test, y_test,f_num=24, random_state=42):
         self.X_train = X_train
         self.y_train = y_train
         self.X_test = X_test
@@ -434,12 +417,13 @@ class Subset:
         self.random_state = random_state
 
     def masks(self, variables=0):
+        # variables=0: 特征，预留固定前缀；variables=1: 标签
         if variables == 0:
             fix_num = self.X_train.shape[1] - 3
             num = self.f_num - fix_num
             masks = []
             prefix = np.ones(fix_num, dtype=bool)
-            for k in range(1, num + 1):
+            for k in range(0, num + 1):
                 for feature_subset in combinations(range(num), k):
                     mask = np.zeros(num, dtype=bool)
                     mask[list(feature_subset)] = True
@@ -449,47 +433,37 @@ class Subset:
         elif variables == 1:
             num = self.y_train.shape[1]
             masks = []
-            fix_num = 0
-            prefix = np.ones(fix_num, dtype=bool)
             for k in range(1, num + 1):
                 for feature_subset in combinations(range(num), k):
                     mask = np.zeros(num, dtype=bool)
                     mask[list(feature_subset)] = True
-                    masks.append(np.concatenate([prefix, mask]))
+                    masks.append(mask)
             return masks
         
     def sub(self):
         feature_masks = self.masks(variables=0)
         label_masks = self.masks(variables=1)
-        # 只保留单一的label
-        label_masks = [m for m in label_masks if m.sum() == 1]
 
         models = {}
         feature_subset_mapping = {}
         label_subset_mapping = {}
         predictions = []
+
         for i, f_mask in enumerate(feature_masks):
             for j, l_mask in enumerate(label_masks):
                 X_train_subset = self.X_train.iloc[:, f_mask]
                 y_train_subset = self.y_train.iloc[:, l_mask]
                 # 通过 drop 的方法保证子集的数据的完整
-                X = X_train_subset.copy().reset_index(drop=True)
-                y = y_train_subset.copy().reset_index(drop=True)
-                if isinstance(X, pd.Series):
-                    X_missing = X.isna()
-                else:
-                    X_missing = X.isna().any(axis=1)
-                if isinstance(y, pd.Series):
-                    y_missing = y.isna()
-                else:
-                    y_missing = y.isna().any(axis=1)
-                miss_idx = X[X_missing].index.union(y[y_missing].index)
+                X = X_train_subset.reset_index(drop=True)
+                y = y_train_subset.reset_index(drop=True)
+
+                miss_idx = X[X.isna().any(axis=1)].index.union(y[y.isna().any(axis=1)].index)
                 X_clean = X.drop(index=miss_idx)
                 y_clean = y.drop(index=miss_idx)
 
-                if X_clean.shape[1] == 0 or y_clean.shape[1] == 0:
+                if X_clean.shape[0]==0 or X_clean.shape[1] == 0 or y_clean.shape[1] == 0:
                     continue
-                model = self.model.XGBRegressor(random_state=self.random_state)
+                model = self.model(random_state=self.random_state)
                 model.fit(X_clean, y_clean.values.squeeze())
                 model_name = f'M_F_{i + 1}_L_{j + 1}'
                 models[model_name] = model
@@ -504,79 +478,70 @@ class Subset:
                 X_test_subset = self.X_test.iloc[:, f_mask]
                 y_pred = model.predict(X_test_subset)
 
-                for idx, label_idx in enumerate(np.where(l_mask)[0]):
-                    if y_pred.ndim > 1:
-                        for col_idx in range(y_pred.shape[1]):
-                            predictions.append({
-                                'model_name': f'{model_name}_output_{col_idx}',
-                                'prediction': y_pred[:, col_idx]
-                            })
-                    else:
+                # 预测区段替换
+                label_indices = np.where(l_mask)[0]
+
+                if y_pred.ndim > 1:
+                    for out_col, label_idx in enumerate(label_indices):
                         predictions.append({
-                            'model_name': model_name,
+                            'model_name': f'{model_name}_L_{label_idx + 1}',
+                            'prediction': y_pred[:, out_col]
+                        })
+                else:
+                    # 单输出：直接用 1 维数组，复制给掩码中的每个标签
+                    for label_idx in label_indices:
+                        predictions.append({
+                            'model_name': f'{model_name}_L_{label_idx + 1}',
                             'prediction': y_pred
                         })
+
         return predictions
 
-    def _get_output(self, name,X_miss_pro,y_miss_pro,seed):
+    def _get_output(self):
         predictions = self.sub()
-        df_dict = {}
-        for r in predictions:
-            model_name = r['model_name']
-            df_dict[model_name] = r['prediction']
+
+        if not predictions:
+            return []
+        
+        df_dict = {r['model_name']: r['prediction'] for r in predictions}
         df_sub = pd.DataFrame(df_dict)
+
         # 子集结果处理
         results = []
+        results_all = []
+        per_label_preds = []
+        print(self.y_test.columns)
+        for idx, col in enumerate(self.y_test.columns, start=1):
+            #print(idx, col)
+            label_model_cols = [c for c in df_sub.columns if c.endswith(f'L_{idx}')]
 
-        label1_array = []
-        label2_array = []
-        label3_array = []
-        label4_array = []
-        for i in range(1, 2 ** 3):
-            label1 = [f'M_F_{i}_L_1']
-            label2 = [f'M_F_{i}_L_2']
-            label3 = [f'M_F_{i}_L_3']
-            label4 = [f'M_F_{i}_L_4']
-            label1_data = df_sub[label1]
-            label2_data = df_sub[label2]
-            label3_data = df_sub[label3]
-            label4_data = df_sub[label4]
-            label1_array.append(label1_data)
-            label2_array.append(label2_data)
-            label3_array.append(label3_data)
-            label4_array.append(label4_data)
-        label1_array = np.array(label1_array)
-        label2_array = np.array(label2_array)
-        label3_array = np.array(label3_array)
-        label4_array = np.array(label4_array)
-        arr_squeezed1 = np.squeeze(label1_array, axis=2)
-        arr_squeezed2 = np.squeeze(label2_array, axis=2)
-        arr_squeezed3 = np.squeeze(label3_array, axis=2)
-        arr_squeezed4 = np.squeeze(label4_array, axis=2)
-        mean_label1 = np.median(arr_squeezed1, axis=0)
-        mean_label2 = np.median(arr_squeezed2, axis=0)
-        mean_label3 = np.median(arr_squeezed3, axis=0)
-        mean_label4 = np.median(arr_squeezed4, axis=0)
-        # 先将 (9,) 转换为 (9,1)
-        mean_label1 = mean_label1.reshape(-1, 1)  # (9,1)
-        mean_label2 = mean_label2.reshape(-1, 1)  # (9,1)
-        mean_label3 = mean_label3.reshape(-1, 1)
-        mean_label4 = mean_label4.reshape(-1, 1)
-        pred = [mean_label1, mean_label2, mean_label3, mean_label4]
+            if not label_model_cols:
+                continue
 
-        for i, col in enumerate(self.y_train.columns):
-            r2 = r2_score(self.y_test[col], pred[i])
-            mse = mean_squared_error(self.y_test[col], pred[i])
-            mae = mean_absolute_error(self.y_test[col], pred[i])
+            agg_pred = df_sub[label_model_cols].median(axis=1)
+
+            per_label_preds.append(agg_pred.values)
+            #print(len(per_label_preds))
             results.append({
                 'method': 'Subset',
-                'seed': seed,
-                'X_miss_pro': X_miss_pro,
-                'y_miss_pro': y_miss_pro,
+                'seed': self.random_state,
                 'label': col,
-                'r2': r2,
-                'mae': mae,
-                'mse': mse
+                'r2': r2_score(self.y_test[col], agg_pred),
+                'mae': mean_absolute_error(self.y_test[col], agg_pred),
+                'mse': mean_squared_error(self.y_test[col], agg_pred),
+                'rmse': np.sqrt(mean_squared_error(self.y_test[col], agg_pred))
+            })
+            
+        if per_label_preds:
+            agg_matrix = np.column_stack(per_label_preds)
+            ovreall_pred = pd.DataFrame(agg_matrix, columns=self.y_test.columns)
+            results_all.append({
+                'method': 'Subset',
+                'seed': self.random_state,
+                'r2': r2_score(self.y_test, ovreall_pred),
+                'mae': mean_absolute_error(self.y_test, ovreall_pred),
+                'mse': mean_squared_error(self.y_test, ovreall_pred),
+                'rmse': np.sqrt(mean_squared_error(self.y_test, ovreall_pred))
             })
         
-        return results
+        return results, results_all
