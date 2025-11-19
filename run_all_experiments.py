@@ -2,7 +2,6 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
-from multiprocessing import Pool, cpu_count
 from contextlib import redirect_stdout, redirect_stderr
 import pandas as pd
 
@@ -79,7 +78,7 @@ def run_for_seed(seed):
     return results
 
 def main():
-    seeds = [40]
+    seeds = [10,20,30,40,50,60,70,80,90,100]
     aggregated = {
         'direct': [],
         'feature': [],
@@ -90,8 +89,6 @@ def main():
         'feature_label': [],
         'complete_label': [],
     }
-
-    n_proc = min(len(seeds), cpu_count())
 
     log_dir = PROJECT_ROOT / 'logs'
     log_dir.mkdir(exist_ok=True)
@@ -112,12 +109,9 @@ def main():
         warnings.filterwarnings("default")
 
         with redirect_stdout(log_f), redirect_stderr(err_f):
-            with Pool(
-                processes=n_proc,
-                initializer=_setup_logging,
-                initargs=(log_file, err_file, warn_file),
-            ) as pool:
-                results_list = pool.map(run_for_seed, seeds)
+            results_list = []
+            for seed in seeds:
+                results_list.append(run_for_seed(seed))
 
             for res in results_list:
                 for key in aggregated:

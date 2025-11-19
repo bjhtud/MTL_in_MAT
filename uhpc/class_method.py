@@ -23,8 +23,8 @@ from uhpc.method.MultitaskGP import model_fit_predict as multitask_gp_predict
 from uhpc.method.XGBoost import xgboost_fit_predict
 
 IMPUTATION_METHODS = [
-    #('MissForest', 'missforest'),
-    #('RFE-MissForest', 'RFE_mf'),
+    ('MissForest', 'missforest'),
+    ('RFE-MissForest', 'RFE_mf'),
     ('Hyperimpute', 'hyperimpute'),
     ('KNN based method (MatImputer)', 'MatImputer'),
     ('GAIN', 'gain'),
@@ -44,6 +44,7 @@ IMPUTATION_METHODS = [
     ('hmc_vae', 'hmc_vae'),
     ('hh_vaem', 'hh_vaem'),
     ('gtmcc', 'gtmcc'),
+    ('subset', 'subset')
     ]
 
 def _slug(text: str) -> str:

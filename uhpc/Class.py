@@ -209,25 +209,22 @@ class BaselineImputer:
         base_model_factory=None,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        堆叠插补：利用其他任务标签作为输入，迭代训练回归模型填充缺失标签。
+        堆叠插补：特征和标签都作为潜在目标，缺哪一列就用其它列来预测该列。
         """
         n_rounds = max(1, int(n_rounds))
 
+        X_cols = X.columns.astype(str)
+        y_cols = y.columns.astype(str)
         X_model = X.copy()
-        X_model.columns = X_model.columns.astype(str)
-        for col in X_model.columns:
-            series = X_model[col]
-            mean_val = series.mean()
-            if pd.isna(mean_val):
-                mean_val = 0.0
-            X_model[col] = series.fillna(mean_val)
+        X_model.columns = X_cols
+        y_model = y.copy()
+        y_model.columns = y_cols
 
-        y_filled = y.copy()
-        y_filled.columns = y_filled.columns.astype(str)
-        y_filled.columns = y_filled.columns.astype(str)
-        y_filled = y_filled.fillna(y_filled.mean())
-        original_missing = y.isna()
-        order = list(y_filled.columns)
+        Z = pd.concat([X_model, y_model], axis=1)
+        original_missing = Z.isna()
+        col_means = Z.mean().fillna(0.0)
+        Z_filled = Z.fillna(col_means)
+        order = list(Z_filled.columns)
 
         def _build_model():
             if base_model_factory is not None:
@@ -243,17 +240,22 @@ class BaselineImputer:
 
         for _ in range(n_rounds):
             for col in order:
-                mask = ~y[col].isna()
-                if mask.sum() < 5:
+                mask = ~Z[col].isna()
+                if mask.sum() < 2:
+                    fill_value = col_means[col]
+                    Z_filled.loc[original_missing[col], col] = fill_value
                     continue
-                features = pd.concat([X_model, y_filled.drop(columns=col)], axis=1)
+                features = Z_filled.drop(columns=col)
                 model = _build_model()
-                model.fit(features.loc[mask], y.loc[mask, col])
-                preds = pd.Series(model.predict(features), index=y.index)
+                model.fit(features.loc[mask], Z.loc[mask, col])
+                preds = pd.Series(model.predict(features), index=Z.index)
                 missing_mask = original_missing[col]
-                y_filled.loc[missing_mask, col] = preds.loc[missing_mask]
+                Z_filled.loc[missing_mask, col] = preds.loc[missing_mask]
 
-        return X.copy(), y_filled
+        Z_filled = Z_filled.fillna(col_means)
+        X_imputed = Z_filled.loc[:, X_cols]
+        y_imputed = Z_filled.loc[:, y_cols]
+        return X_imputed, y_imputed
 
     def _gtmcc_impute(self,
                       X: pd.DataFrame,
